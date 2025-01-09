@@ -15,15 +15,20 @@ from loguru import logger
 from ..core.config import settings
 from .tts_model import TTSModel
 from .audio import AudioService, AudioNormalizer
+from ..utils.housekeeping import cleanup, log_gpu_memory
 
 
 class TTSService:
-    def __init__(self, output_dir: str = None):
-        self.output_dir = output_dir
-
+    _instance = None
+    
+    def __new__(cls, output_dir: str = None):
+        if cls._instance is None:
+            cls._instance = super(TTSService, cls).__new__(cls)
+            cls._instance.output_dir = output_dir
+        return cls._instance
 
     @staticmethod
-    @lru_cache(maxsize=20)  # Cache up to 8 most recently used voices
+    @lru_cache(maxsize=settings.n_cache_voices)  # Cache up to 8 most recently used voices
     def _load_voice(voice_path: str) -> torch.Tensor:
         """Load and cache a voice model"""
         return torch.load(voice_path, map_location=TTSModel.get_device(), weights_only=True)
@@ -37,8 +42,11 @@ class TTSService:
         self, text: str, voice: str, speed: float, stitch_long_output: bool = True
     ) -> Tuple[torch.Tensor, float]:
         """Generate complete audio and return with processing time"""
-        audio, processing_time = self._generate_audio_internal(text, voice, speed, stitch_long_output)
-        return audio, processing_time
+        try:
+            audio, processing_time = self._generate_audio_internal(text, voice, speed, stitch_long_output)
+            return audio, processing_time
+        finally:
+            cleanup()
 
     def _generate_audio_internal(
         self, text: str, voice: str, speed: float, stitch_long_output: bool = True
@@ -99,8 +107,10 @@ class TTSService:
             else:
                 # Process single chunk
                 phonemes, tokens = TTSModel.process_text(text, voice[0])
+                log_gpu_memory("After text processing, pre-generate")
                 audio = TTSModel.generate_from_tokens(tokens, voicepack, speed)
-
+                log_gpu_memory("After audio generation")
+                cleanup(verbose=True)
             processing_time = time.time() - start_time
             return audio, processing_time
 
@@ -116,7 +126,6 @@ class TTSService:
             stream_start = time.time()
             # Create normalizer for consistent audio levels
             stream_normalizer = AudioNormalizer()
-            
             # Input validation and preprocessing
             if not text:
                 raise ValueError("Text is empty")
@@ -125,25 +134,21 @@ class TTSService:
             if not normalized:
                 raise ValueError("Text is empty after preprocessing")
             text = str(normalized)
-            logger.debug(f"Text preprocessing took: {(time.time() - preprocess_start)*1000:.1f}ms")
-
+            # logger.debug(f"Text preprocessing took: {(time.time() - preprocess_start)*1000:.1f}ms")
             # Voice validation and loading
             voice_start = time.time()
             voice_path = self._get_voice_path(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
             voicepack = self._load_voice(voice_path)
-            logger.debug(f"Voice loading took: {(time.time() - voice_start)*1000:.1f}ms")
-
             # Process chunks as they're generated
             is_first = True
             chunks_processed = 0
             # last_chunk_end = time.time()
-            
             # Process chunks as they come from generator
             chunk_gen = chunker.split_text(text)
             current_chunk = next(chunk_gen, None)
-            
+            # log_gpu_memory("Starting first chunk")
             while current_chunk is not None:
                 next_chunk = next(chunk_gen, None)  # Peek at next chunk
                 # chunk_start = time.time()
@@ -153,11 +158,9 @@ class TTSService:
                     # text_process_start = time.time()
                     phonemes, tokens = TTSModel.process_text(current_chunk, voice[0])
                     # text_process_time = time.time() - text_process_start
-                    
                     # audio_gen_start = time.time()
                     chunk_audio = TTSModel.generate_from_tokens(tokens, voicepack, speed)
                     # audio_gen_time = time.time() - audio_gen_start
-                    
                     if chunk_audio is not None:
                         # Convert chunk with proper header handling
                         convert_start = time.time()
@@ -169,21 +172,6 @@ class TTSService:
                             normalizer=stream_normalizer,
                             is_last_chunk=(next_chunk is None)  # Last if no next chunk
                         )
-                        # convert_time = time.time() - convert_start
-                        
-                        # Calculate gap from last chunk
-                        # gap_time = chunk_start - last_chunk_end
-                        
-                        # Log timing details if not silent
-                        # if not silent:
-                        #     logger.debug(
-                        #         f"\nChunk {chunks_processed} timing:"
-                        #         f"\n  Gap from last chunk: {gap_time*1000:.1f}ms"
-                        #         f"\n  Text processing: {text_process_time*1000:.1f}ms"
-                        #         f"\n  Audio generation: {audio_gen_time*1000:.1f}ms"
-                        #         f"\n  Audio conversion: {convert_time*1000:.1f}ms"
-                        #         f"\n  Total chunk time: {(time.time() - chunk_start)*1000:.1f}ms"
-                        #     )
                         
                         yield chunk_bytes
                         is_first = False
@@ -195,11 +183,12 @@ class TTSService:
                     logger.error(f"Failed to generate audio for chunk: '{current_chunk}'. Error: {str(e)}")
                 
                 current_chunk = next_chunk  # Move to next chunk
-                
+            # log_gpu_memory("After last chunk")
         except Exception as e:
             logger.error(f"Error in audio generation stream: {str(e)}")
             raise
-
+        finally:
+            cleanup()
 
     def _save_audio(self, audio: torch.Tensor, filepath: str):
         """Save audio to file"""
@@ -245,6 +234,8 @@ class TTSService:
                 raise RuntimeError(
                     f"Failed to save combined voice to {combined_path}: {str(e)}"
                 )
+            finally:
+                cleanup()
 
             return f
 

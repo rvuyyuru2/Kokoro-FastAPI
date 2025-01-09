@@ -43,6 +43,14 @@ services:
       - "8880:8880"
     environment:
       - PYTHONPATH=/app:/app/Kokoro-82M
+      # Resource Management  
+      - CLEAR_CUDA_CACHE=true # Clear CUDA cache after warmup/each completed request
+      - N_CACHE_VOICES = 5 # Cache 1 voice
+      - N_WARMUPS=1
+      # TTS Settings
+      - MAX_CHUNK_SIZE=300 # Max is 500 for best quality; lower values improve latency to a point
+      - GAP_TRIM_MS=250 # Trim silence between chunks for more natural speaking flow
+
     deploy:
       resources:
         reservations:

@@ -38,6 +38,9 @@ services:
       - "8880:8880"
     environment:
       - PYTHONPATH=/app:/app/Kokoro-82M
+      # TTS Settings
+      - MAX_CHUNK_SIZE=300
+      - GAP_TRIM_MS=250
       # ONNX Optimization Settings for vectorized operations
       - ONNX_NUM_THREADS=8  # Maximize core usage for vectorized ops
       - ONNX_INTER_OP_THREADS=4  # Higher inter-op for parallel matrix operations

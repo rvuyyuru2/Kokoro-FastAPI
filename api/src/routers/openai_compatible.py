@@ -1,8 +1,9 @@
 from typing import List, Union
 
 from loguru import logger
-from fastapi import Depends, Response, APIRouter, HTTPException
-from fastapi import Header
+from fastapi import Depends, Response, APIRouter, HTTPException, FastAPI
+from fastapi import Header, Request
+
 from fastapi.responses import StreamingResponse
 from ..services.tts_service import TTSService
 from ..services.audio import AudioService
@@ -15,9 +16,9 @@ router = APIRouter(
 )
 
 
-def get_tts_service() -> TTSService:
-    """Dependency to get TTSService instance with database session"""
-    return TTSService()  # Initialize TTSService with default settings
+async def get_tts_service(request: Request) -> TTSService:
+    """Dependency to get TTSService instance from app state"""
+    return request.app.state.tts_service
 
 
 async def process_voices(voice_input: Union[str, List[str]], tts_service: TTSService) -> str:

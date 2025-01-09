@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8880
 
+    # Warnmup and resource management
+    clear_cuda_cache: bool = True  # Whether to clear CUDA cache after generation
+    n_cache_voices: int = 5  # Number of voices to keep in lru cache
+    n_warmups: int = 1  # Number of warmup inferences to run
+
     # TTS Settings
     output_dir: str = "output"
     output_dir_size_limit_mb: float = 500.0  # Maximum size of output directory in MB
@@ -28,6 +33,7 @@ class Settings(BaseSettings):
     onnx_optimization_level: str = "all"  # all, basic, or disabled
     onnx_memory_pattern: bool = True  # Enable memory pattern optimization
     onnx_arena_extend_strategy: str = "kNextPowerOfTwo"  # Memory allocation strategy
+
 
     class Config:
         env_file = ".env"

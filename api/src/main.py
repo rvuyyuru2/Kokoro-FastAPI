@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .core.config import settings
 from .services.tts_model import TTSModel
 from .services.tts_service import TTSService
+from .services.warmup import WarmupService
 from .routers.openai_compatible import router as openai_router
 from .routers.text_processing import router as text_router
 
@@ -23,7 +24,16 @@ async def lifespan(app: FastAPI):
 
     # Initialize the main model with warm-up
     voicepack_count = await TTSModel.setup()
-    # boundary = "█████╗"*9
+    
+    # Initialize TTSService singleton and store in app state
+    tts_service = TTSService()
+    app.state.tts_service = tts_service
+    
+    # Initialize warmup service with the singleton instance
+    warmup = WarmupService(tts_service=tts_service)
+    loaded_voices = warmup.load_voices()
+    await warmup.warmup_voices("Hello world", loaded_voices)
+    
     boundary = "░" * 24
     startup_msg =f"""
 
@@ -38,7 +48,6 @@ async def lifespan(app: FastAPI):
 
 {boundary}
                 """
-    # TODO: Improve CPU warmup, threads, memory, etc
     startup_msg += f"\nModel warmed up on {TTSModel.get_device()}"
     startup_msg += f"\n{voicepack_count} voice packs loaded\n"
     startup_msg += f"\n{boundary}\n"

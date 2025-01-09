@@ -8,12 +8,16 @@ from httpx import AsyncClient
 
 from ..src.main import app
 
-# Create test client
-client = TestClient(app)
+# Create test client fixture
+@pytest.fixture
+def client(mock_tts_service):
+    app.state.tts_service = mock_tts_service
+    return TestClient(app)
 
 # Create async client fixture
 @pytest_asyncio.fixture
-async def async_client():
+async def async_client(mock_tts_service):
+    app.state.tts_service = mock_tts_service
     async with AsyncClient(app=app, base_url="http://test") as ac:
         yield ac
 
@@ -21,6 +25,14 @@ async def async_client():
 # Mock services
 @pytest.fixture
 def mock_tts_service(monkeypatch):
+    # Mock TTSModel in both places
+    mock_model = Mock()
+    mock_model._device = "cpu"
+    mock_model.get_device = Mock(return_value="cpu")
+    monkeypatch.setattr("api.src.services.tts_model.TTSModel", mock_model)
+    monkeypatch.setattr("api.src.services.tts_service.TTSModel", mock_model)
+    
+    # Create TTSService mock
     mock_service = Mock()
     mock_service._generate_audio.return_value = (bytes([0, 1, 2, 3]), 1.0)
     
@@ -42,7 +54,9 @@ def mock_tts_service(monkeypatch):
         "am_michael",
         "bm_george",
     ])
-    mock_service.combine_voices = AsyncMock()
+    mock_service.combine_voices = AsyncMock(return_value="af_bella_af_sarah")
+    
+    # Mock the service class
     monkeypatch.setattr(
         "api.src.routers.openai_compatible.TTSService",
         lambda *args, **kwargs: mock_service,
@@ -60,7 +74,7 @@ def mock_audio_service(monkeypatch):
     return mock_service
 
 
-def test_health_check():
+def test_health_check(client):
     """Test the health check endpoint"""
     response = client.get("/health")
     assert response.status_code == 200

@@ -111,8 +111,7 @@ def test_generate_audio_empty_text(tts_service):
         tts_service._generate_audio("", "af", 1.0)
 
 
-@patch("api.src.services.tts_model.TTSModel.get_instance")
-@patch("api.src.services.tts_model.TTSModel.get_device")
+@patch("api.src.services.tts_model.TTSModel")
 @patch("os.path.exists")
 @patch("kokoro.normalize_text")
 @patch("kokoro.phonemize")
@@ -126,15 +125,15 @@ def test_generate_audio_phonemize_error(
     mock_phonemize,
     mock_normalize,
     mock_exists,
-    mock_get_device,
-    mock_instance,
+    mock_tts_model,
     tts_service,
 ):
     """Test handling phonemization error"""
     mock_normalize.return_value = "Test text"
     mock_phonemize.side_effect = Exception("Phonemization failed")
-    mock_instance.return_value = (mock_generate, "cpu")  # Use the same mock for consistency
-    mock_get_device.return_value = "cpu"
+    # Setup TTSModel mock
+    mock_tts_model.get_device.return_value = "cpu"
+    mock_tts_model._device = "cpu"
     mock_exists.return_value = True
     mock_torch_load.return_value = torch.zeros((10, 24000))
     mock_generate.return_value = (None, None)

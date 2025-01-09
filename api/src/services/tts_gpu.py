@@ -106,6 +106,13 @@ class TTSGPUModel(TTSBaseModel):
     _device = "cuda"
 
     @classmethod
+    def get_instance(cls):
+        """Get or create singleton instance"""
+        if cls._instance is None:
+            raise RuntimeError("Model not initialized. Call setup() first.")
+        return cls._instance, cls.get_device()
+
+    @classmethod
     def initialize(cls, model_dir: str, model_path: str):
         """Initialize PyTorch model for GPU inference"""
         if cls._instance is None and torch.cuda.is_available():

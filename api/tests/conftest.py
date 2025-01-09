@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import numpy as np
 from unittest.mock import Mock, patch, MagicMock
 
 import pytest
@@ -35,6 +36,9 @@ def cleanup():
 mock_torch = Mock()
 mock_torch.cuda = Mock()
 mock_torch.cuda.is_available = Mock(return_value=False)
+mock_torch.cuda.memory_allocated = Mock(return_value=1024)  # Return 1KB for testing
+mock_torch.cuda.memory_reserved = Mock(return_value=2048)   # Return 2KB for testing
+mock_torch.cuda.empty_cache = Mock()  # Mock cache clearing
 
 # Create a mock tensor class that supports basic operations
 class MockTensor:
@@ -96,6 +100,11 @@ mock_torch.zeros = lambda *args: MockTensor([0] * (args[0] if isinstance(args[0]
 mock_torch.arange = lambda x: MockTensor(list(range(x)))
 mock_torch.gt = lambda x, y: MockTensor([False] * x.shape[0])
 
+# Mock torch.load to return a mock tensor
+def mock_torch_load(*args, **kwargs):
+    return MockTensor([1.0] * 1000)  # Return mock voice tensor
+mock_torch.load = mock_torch_load
+
 # Mock modules before they're imported
 sys.modules["torch"] = mock_torch
 sys.modules["transformers"] = Mock()
@@ -108,20 +117,23 @@ sys.modules["kokoro.phonemize"] = Mock()
 sys.modules["kokoro.tokenize"] = Mock()
 sys.modules["onnxruntime"] = Mock()
 
+# Mock os.path operations for voice files
+@pytest.fixture(autouse=True)
+def mock_voice_paths():
+    """Mock voice file path operations"""
+    with patch("os.path.exists") as mock_exists, \
+         patch("os.path.join") as mock_join:
+        mock_exists.return_value = True  # Voice files exist
+        mock_join.side_effect = lambda *args: "/".join(str(arg) for arg in args)  # Convert paths to strings
+        yield
+
 
 @pytest.fixture(autouse=True)
-def mock_tts_model():
-    """Mock TTSModel and TTS model initialization"""
-    with patch("api.src.services.tts_model.TTSModel") as mock_tts_model, \
-         patch("api.src.services.tts_base.TTSBaseModel") as mock_base_model:
-        
-        # Mock TTSModel
-        model_instance = Mock()
-        model_instance.get_instance.return_value = model_instance
-        model_instance.get_voicepack.return_value = None
-        mock_tts_model.get_instance.return_value = model_instance
-        
-        # Mock TTS model initialization
-        mock_base_model.setup.return_value = 1  # Return dummy voice count
-        
-        yield model_instance
+def cleanup_mock_voices():
+    """Clean up mock voices directory after tests"""
+    mock_voices_dir = os.path.join(os.path.dirname(__file__), "mock_voices")
+    if os.path.exists(mock_voices_dir):
+        shutil.rmtree(mock_voices_dir)
+    yield
+    if os.path.exists(mock_voices_dir):
+        shutil.rmtree(mock_voices_dir)

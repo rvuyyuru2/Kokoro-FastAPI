@@ -13,6 +13,13 @@ class TTSCPUModel(TTSBaseModel):
     _onnx_session = None
 
     @classmethod
+    def get_instance(cls):
+        """Get or create singleton instance"""
+        if cls._instance is None:
+            raise RuntimeError("Model not initialized. Call setup() first.")
+        return cls._instance, cls.get_device()
+
+    @classmethod
     def initialize(cls, model_dir: str, model_path: str = None):
         """Initialize ONNX model for CPU inference"""
         if cls._onnx_session is None:
@@ -69,8 +76,12 @@ class TTSCPUModel(TTSBaseModel):
                 provider_options=[provider_options]
             )
             
-            return cls._onnx_session
-        return cls._onnx_session
+            # Set instance for singleton pattern
+            if cls._instance is None:
+                cls._instance = cls()
+            
+            return cls._instance
+        return cls._instance
 
     @classmethod
     def process_text(cls, text: str, language: str) -> tuple[str, list[int]]:
