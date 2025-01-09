@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     onnx_memory_pattern: bool = True  # Enable memory pattern optimization
     onnx_arena_extend_strategy: str = "kNextPowerOfTwo"  # Memory allocation strategy
 
+    # GPU Settings
+    gpu_pool_size: int = 0  # Number of GPU model instances (0 = auto-scale based on memory)
+    gpu_memory_per_model_gb: float = 1.0  # Memory per model in GB when auto-scaling
+
     class Config:
         env_file = ".env"
 

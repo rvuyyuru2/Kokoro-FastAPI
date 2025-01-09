@@ -43,6 +43,13 @@ services:
       - "8880:8880"
     environment:
       - PYTHONPATH=/app:/app/Kokoro-82M
+      # TTS Settings
+      - MAX_CHUNK_SIZE=400 # Max of 500, best quality; Lower values improve latency
+      - GAP_TRIM_MS=250 # Trim silence at the beginning and end of audio chunks
+      # GPU Settings
+      - CLEAR_CUDA_CACHE=true ### Clear CUDA cache after each request, and after warmup tests.
+      - GPU_POOL_SIZE=0 ### Number of GPU model instances (0 = auto-scale based on memory)
+      - GPU_MEMORY_PER_MODEL_GB=1.0 ### Memory per model in GB when auto-scaling
     deploy:
       resources:
         reservations:

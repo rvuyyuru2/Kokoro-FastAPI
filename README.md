@@ -1,13 +1,12 @@
 <p align="center">
   <img src="githubbanner.png" alt="Kokoro TTS Banner">
 </p>
-
-# Kokoro TTS API
+ 
+#### FastKoko: Dockerized FastAPI wrapper for [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) text-to-speech model
 [![Tests](https://img.shields.io/badge/tests-105%20passed-darkgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-74%25-darkgreen)]()
 [![Tested at Model Commit](https://img.shields.io/badge/last--tested--model--commit-a67f113-blue)](https://huggingface.co/hexgrad/Kokoro-82M/tree/c3b0d86e2a980e027ef71c28819ea02e351c2667) [![Try on Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Try%20on-Spaces-blue)](https://huggingface.co/spaces/Remsky/Kokoro-TTS-Zero)
 
-Dockerized FastAPI wrapper for [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) text-to-speech model
 - OpenAI-compatible Speech endpoint, with inline voice combination functionality
 - NVIDIA GPU accelerated inference (or CPU Onnx) option
 - very fast generation time

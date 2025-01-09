@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  locust:
+    image: locustio/locust
+    ports:
+      - "8089:8089"  # Web interface
+    volumes:
+      - ./:/mnt/locust
+    command: -f /mnt/locust/locustfile.py --host http://host.docker.internal:8880
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -38,6 +38,10 @@ services:
       - "8880:8880"
     environment:
       - PYTHONPATH=/app:/app/Kokoro-82M
+      # TTS Settings
+      - MAX_CHUNK_SIZE=200 # Max of 500, best quality; Lower values improve latency
+      - GAP_TRIM_MS=250 # Trim silence at the beginning and end of audio chunks
+      # Note: GPU_POOL_SIZE and GPU_MEMORY_PER_MODEL_GB settings are not needed for CPU version
       # ONNX Optimization Settings for vectorized operations
       - ONNX_NUM_THREADS=8  # Maximize core usage for vectorized ops
       - ONNX_INTER_OP_THREADS=4  # Higher inter-op for parallel matrix operations

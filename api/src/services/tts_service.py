@@ -3,6 +3,7 @@ import aiofiles.os
 import os
 import re
 import time
+import threading
 from typing import List, Tuple, Optional
 from functools import lru_cache
 
@@ -20,13 +21,25 @@ from .audio import AudioService, AudioNormalizer
 class TTSService:
     def __init__(self, output_dir: str = None):
         self.output_dir = output_dir
-
-
-    @staticmethod
-    @lru_cache(maxsize=20)  # Cache up to 8 most recently used voices
-    def _load_voice(voice_path: str) -> torch.Tensor:
-        """Load and cache a voice model"""
-        return torch.load(voice_path, map_location=TTSModel.get_device(), weights_only=True)
+        self._voice_cache_lock = threading.Lock()
+        self._voice_cache = {}
+        
+    def _load_voice(self, voice_path: str) -> torch.Tensor:
+        """Load and cache a voice model with thread safety"""
+        with self._voice_cache_lock:
+            if voice_path in self._voice_cache:
+                return self._voice_cache[voice_path]
+            
+            voicepack = torch.load(voice_path, map_location=TTSModel.get_device(), weights_only=True)
+            
+            # Limit cache size
+            if len(self._voice_cache) >= settings.n_cache_voices:
+                # Remove oldest entry
+                oldest = next(iter(self._voice_cache))
+                del self._voice_cache[oldest]
+                
+            self._voice_cache[voice_path] = voicepack
+            return voicepack
 
     def _get_voice_path(self, voice_name: str) -> Optional[str]:
         """Get the path to a voice file"""
@@ -125,7 +138,7 @@ class TTSService:
             if not normalized:
                 raise ValueError("Text is empty after preprocessing")
             text = str(normalized)
-            logger.debug(f"Text preprocessing took: {(time.time() - preprocess_start)*1000:.1f}ms")
+            # logger.debug(f"Text preprocessing took: {(time.time() - preprocess_start)*1000:.1f}ms")
 
             # Voice validation and loading
             voice_start = time.time()
@@ -133,41 +146,35 @@ class TTSService:
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
             voicepack = self._load_voice(voice_path)
-            logger.debug(f"Voice loading took: {(time.time() - voice_start)*1000:.1f}ms")
-
-            # Process chunks as they're generated
-            is_first = True
-            chunks_processed = 0
-            # last_chunk_end = time.time()
-            
-            # Process chunks as they come from generator
-            chunk_gen = chunker.split_text(text)
-            current_chunk = next(chunk_gen, None)
-            
-            while current_chunk is not None:
-                next_chunk = next(chunk_gen, None)  # Peek at next chunk
-                # chunk_start = time.time()
-                chunks_processed += 1
+            # logger.debug(f"Voice loading took: {(time.time() - voice_start)*1000:.1f}ms")
+            # Pre-process all chunks to avoid holding locks during streaming
+            chunks_data = []
+            for chunk in chunker.split_text(text):
                 try:
-                    # Process text and generate audio
-                    # text_process_start = time.time()
-                    phonemes, tokens = TTSModel.process_text(current_chunk, voice[0])
-                    # text_process_time = time.time() - text_process_start
-                    
-                    # audio_gen_start = time.time()
+                    phonemes, tokens = TTSModel.process_text(chunk, voice[0])
+                    chunks_data.append((chunk, tokens))
+                except Exception as e:
+                    logger.error(f"Failed to process chunk: '{chunk}'. Error: {str(e)}")
+                    continue
+
+            if not chunks_data:
+                raise ValueError("No chunks were processed successfully")
+            
+            # Process chunks with minimal lock holding
+            for i, (chunk, tokens) in enumerate(chunks_data):
+                try:
+                    # Generate audio with thread-safe model instance
                     chunk_audio = TTSModel.generate_from_tokens(tokens, voicepack, speed)
-                    # audio_gen_time = time.time() - audio_gen_start
                     
                     if chunk_audio is not None:
                         # Convert chunk with proper header handling
-                        convert_start = time.time()
                         chunk_bytes = AudioService.convert_audio(
                             chunk_audio,
                             24000,
                             output_format,
-                            is_first_chunk=is_first,
+                            is_first_chunk=(i == 0),
                             normalizer=stream_normalizer,
-                            is_last_chunk=(next_chunk is None)  # Last if no next chunk
+                            is_last_chunk=(i == len(chunks_data) - 1)
                         )
                         # convert_time = time.time() - convert_start
                         
@@ -186,15 +193,11 @@ class TTSService:
                         #     )
                         
                         yield chunk_bytes
-                        is_first = False
-                        # last_chunk_end = time.time()
                     else:
-                        logger.error(f"No audio generated for chunk: '{current_chunk}'")
+                        logger.error(f"No audio generated for chunk: '{chunk}'")
 
                 except Exception as e:
-                    logger.error(f"Failed to generate audio for chunk: '{current_chunk}'. Error: {str(e)}")
-                
-                current_chunk = next_chunk  # Move to next chunk
+                    logger.error(f"Failed to generate audio for chunk: '{chunk}'. Error: {str(e)}")
                 
         except Exception as e:
             logger.error(f"Error in audio generation stream: {str(e)}")
@@ -224,9 +227,11 @@ class TTSService:
         for voice in voices:
             try:
                 voice_path = os.path.join(TTSModel.VOICES_DIR, f"{voice}.pt")
-                voicepack = torch.load(
-                    voice_path, map_location=TTSModel.get_device(), weights_only=True
-                )
+                if not os.path.exists(voice_path):
+                    raise ValueError(f"Voice not found: {voice}")
+                    
+                # Use thread-safe voice loading
+                voicepack = self._load_voice(voice_path)
                 t_voices.append(voicepack)
                 v_name.append(voice)
             except Exception as e:
