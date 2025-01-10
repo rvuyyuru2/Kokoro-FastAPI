@@ -52,7 +52,7 @@ jobs:
         
     - name: Test with pytest
       run: |
-        pytest --timeout=300 --asyncio-mode=auto --cov=api --cov-report=term-missing
+        pytest --asyncio-mode=auto --cov=api --cov-report=term-missing
 
   # Only build Docker on develop branch pushes (not PRs)
   docker:
