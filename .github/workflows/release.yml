@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION=$(cat VERSION | tr -d '\n')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+  build-images:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - type: gpu
+            dockerfile: ./Dockerfile
+            context: .
+            suffix: ""
+          - type: cpu
+            dockerfile: ./Dockerfile.cpu
+            context: .
+            suffix: "-cpu"
+          - type: gui
+            dockerfile: ./ui/Dockerfile
+            context: ./ui
+            suffix: "-gui"
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+    - name: Build and push ${{ matrix.type }}
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ matrix.context }}
+        file: ${{ matrix.dockerfile }}
+        push: true
+        tags: |
+          ${{ secrets.DOCKERHUB_USERNAME }}/kokoro-fastapi:latest${{ matrix.suffix }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/kokoro-fastapi:v${{ needs.prepare.outputs.version }}${{ matrix.suffix }}
+        cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/kokoro-fastapi:buildcache${{ matrix.suffix }}
+        cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/kokoro-fastapi:buildcache${{ matrix.suffix }},mode=max
+        platforms: linux/amd64
+
+  create-release:
+    needs: [prepare, build-images]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ needs.prepare.outputs.version }}
+        release_name: Release v${{ needs.prepare.outputs.version }}
+        body: |
+          Release v${{ needs.prepare.outputs.version }}
+          
+          Docker images:
+          - kokoro-fastapi:latest (GPU)
+          - kokoro-fastapi:v${{ needs.prepare.outputs.version }}
+          - kokoro-fastapi:latest-cpu
+          - kokoro-fastapi:v${{ needs.prepare.outputs.version }}-cpu
+          - kokoro-fastapi:latest-gui
+          - kokoro-fastapi:v${{ needs.prepare.outputs.version }}-gui
+        draft: false
+        prerelease: false

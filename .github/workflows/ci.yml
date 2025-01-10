@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [ "develop" ]
+  pull_request:
+    branches: [ "develop" ]
+
+jobs:
+  # First verify code and tests
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
+      fail-fast: false
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Set up pip cache
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install PyTorch CPU
+      run: |
+        python -m pip install --upgrade pip
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y espeak-ng
+
+    - name: Install dependencies
+      run: |
+        pip install ruff
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+
+    - name: Lint with ruff
+      run: ruff check .
+        
+    - name: Test with pytest
+      run: |
+        pytest --timeout=300 --asyncio-mode=auto --cov=api --cov-report=term-missing
+
+  # Only build Docker on develop branch pushes (not PRs)
+  docker:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64
