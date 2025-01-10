@@ -22,7 +22,9 @@ jobs:
   build-images:
     needs: prepare
     runs-on: ubuntu-latest
+    timeout-minutes: 60 
     strategy:
+      fail-fast: false  # Continue with other builds if one fails
       matrix:
         include:
           - type: gpu
@@ -50,6 +52,7 @@ jobs:
         password: ${{ secrets.DOCKERHUB_TOKEN }}
       
     - name: Build and push ${{ matrix.type }}
+      id: docker_build
       uses: docker/build-push-action@v5
       with:
         context: ${{ matrix.context }}
@@ -60,7 +63,10 @@ jobs:
           ${{ secrets.DOCKERHUB_USERNAME }}/kokoro-fastapi:v${{ needs.prepare.outputs.version }}${{ matrix.suffix }}
         cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/kokoro-fastapi:buildcache${{ matrix.suffix }}
         cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/kokoro-fastapi:buildcache${{ matrix.suffix }},mode=max
-        platforms: linux/amd64
+        platforms: ${{ matrix.type == 'gpu' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+
+    - name: Image digest
+      run: echo ${{ steps.docker_build.outputs.digest }}
 
   create-release:
     needs: [prepare, build-images]
@@ -79,11 +85,19 @@ jobs:
           Release v${{ needs.prepare.outputs.version }}
           
           Docker images:
-          - kokoro-fastapi:latest (GPU)
+
+          GPU (AMD64 only):
+          - kokoro-fastapi:latest
           - kokoro-fastapi:v${{ needs.prepare.outputs.version }}
+
+          CPU (AMD64 + ARM64):
           - kokoro-fastapi:latest-cpu
           - kokoro-fastapi:v${{ needs.prepare.outputs.version }}-cpu
+
+          GUI (AMD64 + ARM64):
           - kokoro-fastapi:latest-gui
           - kokoro-fastapi:v${{ needs.prepare.outputs.version }}-gui
+
+          Note: CPU and GUI images support both x86_64 and ARM architectures (M1/M2 Macs)
         draft: false
         prerelease: false

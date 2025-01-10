@@ -24,7 +24,7 @@ Our CI pipeline runs these checks on your PR:
 2. Tests:
 - Runs in Docker with CPU PyTorch
 - Includes coverage reporting
-- Has 5-minute timeout protection
+- Has some timeout protection so I don't burn out too many build minutes
 
 ## Branch Structure
 

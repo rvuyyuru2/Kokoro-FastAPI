@@ -1,11 +1,24 @@
 line-length = 88
 
 [lint]
-select = ["I"]
+# F: Basic Python errors (pyflakes)
+# E: Common style errors
+# W: Common style warnings
+# I: Import sorting
+
+# Ignore line length errors since we use black-compatible line length
+ignore = [
+    "E501",  # Line too long
+    "B905",  # `zip()` without an explicit `strict=` parameter
+    "N999",  # Invalid module name
+]
+
+# Target Python 3.10
+target-version = "py310"
 
 [lint.isort]
 combine-as-imports = true
 force-wrap-aliases = true
 length-sort = true
 split-on-trailing-comma = true
-section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+section-order = ["standard-library", "third-party", "first-party"]
