@@ -18,7 +18,9 @@ RUN useradd -m -u 1000 appuser
 # Create directories and set ownership
 RUN mkdir -p /app/models && \
     mkdir -p /app/api/src/voices && \
-    chown -R appuser:appuser /app
+    mkdir -p /app/api/src/models && \
+    chown -R appuser:appuser /app && \
+    chmod -R 755 /app/api/src/models  # Ensure write permissions for model uploads
 
 USER appuser
 
@@ -28,8 +30,11 @@ RUN set -x && \
     curl -L -o model.tar.gz https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.0.1/kokoro-82m-onnx.tar.gz && \
     echo "Downloaded model.tar.gz:" && ls -lh model.tar.gz && \
     tar xzf model.tar.gz && \
-    echo "Contents after extraction:" && ls -lhR && \
     rm model.tar.gz && \
+    echo "Downloading additional models:" && \
+    curl -L -o kokoro.onnx https://github.com/taylorchu/kokoro-onnx/releases/download/v0.1.0/kokoro.onnx && \
+    curl -L -o kokoro-quant.onnx https://github.com/taylorchu/kokoro-onnx/releases/download/v0.1.0/kokoro-quant.onnx && \
+    curl -L -o kokoro-quant-convinteger.onnx https://github.com/taylorchu/kokoro-onnx/releases/download/v0.1.0/kokoro-quant-convinteger.onnx && \
     echo "Final contents:" && ls -lhR
 
 # Download and extract voice models

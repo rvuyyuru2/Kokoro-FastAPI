@@ -11,19 +11,22 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
 
     def refresh_status():
         try:
-            is_available, voices = api.check_api_status()
+            is_available, voices, models = api.check_api_status()
             status = "Available" if is_available else "Waiting for Service..."
 
-            if is_available and voices:
-                # Preserve current voice selection if it exists and is still valid
+            if is_available and voices and models:
+                # Preserve current selections if they exist and are still valid
                 current_voice = components["model"]["voice"].value
+                current_model = components["model"]["model"].value
                 default_voice = current_voice if current_voice in voices else voices[0]
+                default_model = current_model if current_model in models else models[0]
                 return [
                     gr.update(
                         value=f"🔄 TTS Service: {status}",
                         interactive=True,
                         variant="secondary",
                     ),
+                    gr.update(choices=models, value=default_model),
                     gr.update(choices=voices, value=default_voice),
                 ]
             return [
@@ -32,6 +35,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
                     interactive=True,
                     variant="secondary",
                 ),
+                gr.update(choices=[], value=None),
                 gr.update(choices=[], value=None),
             ]
         except Exception as e:
@@ -42,6 +46,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
                     interactive=True,
                     variant="secondary",
                 ),
+                gr.update(choices=[], value=None),
                 gr.update(choices=[], value=None),
             ]
 
@@ -90,9 +95,9 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
             print(f"Error handling file: {e}")
             return "" if disable_local_saving else [gr.update(choices=files.list_input_files())]
 
-    def generate_from_text(text, voice, format, speed):
+    def generate_from_text(text, model, voice, format, speed):
         """Generate speech from direct text input"""
-        is_available, _ = api.check_api_status()
+        is_available, _, _ = api.check_api_status()
         if not is_available:
             gr.Warning("TTS Service is currently unavailable")
             return [None, gr.update(choices=files.list_output_files())]
@@ -105,7 +110,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
         if not disable_local_saving:
             files.save_text(text)
             
-        result = api.text_to_speech(text, voice, format, speed)
+        result = api.text_to_speech(text, voice, format, speed, model)
         if result is None:
             gr.Warning("Failed to generate speech. Please try again.")
             return [None, gr.update(choices=files.list_output_files())]
@@ -117,9 +122,9 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
             ),
         ]
 
-    def generate_from_file(selected_file, voice, format, speed):
+    def generate_from_file(selected_file, model, voice, format, speed):
         """Generate speech from selected file"""
-        is_available, _ = api.check_api_status()
+        is_available, _, _ = api.check_api_status()
         if not is_available:
             gr.Warning("TTS Service is currently unavailable")
             return [None, gr.update(choices=files.list_output_files())]
@@ -129,7 +134,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
             return [None, gr.update(choices=files.list_output_files())]
 
         text = files.read_text_file(selected_file)
-        result = api.text_to_speech(text, voice, format, speed)
+        result = api.text_to_speech(text, voice, format, speed, model)
         if result is None:
             gr.Warning("Failed to generate speech. Please try again.")
             return [None, gr.update(choices=files.list_output_files())]
@@ -146,7 +151,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
             return gr.update(value=file_path, visible=True)
         return gr.update(visible=False)
 
-    def clear_files(voice, format, speed):
+    def clear_files(model, voice, format, speed):
         """Delete all input files and clear UI components while preserving model settings"""
         files.delete_all_input_files()
         return [
@@ -155,6 +160,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
             gr.update(value=""),  # file_preview
             None,  # audio_output
             gr.update(choices=files.list_output_files()),  # output_files
+            gr.update(value=model),  # model
             gr.update(value=voice),  # voice
             gr.update(value=format),  # format
             gr.update(value=speed),  # speed
@@ -172,7 +178,11 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
     # Connect event handlers
     components["model"]["status_btn"].click(
         fn=refresh_status,
-        outputs=[components["model"]["status_btn"], components["model"]["voice"]],
+        outputs=[
+            components["model"]["status_btn"],
+            components["model"]["model"],
+            components["model"]["voice"]
+        ],
     )
 
     # Connect text submit button (always present)
@@ -180,6 +190,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
         fn=generate_from_text,
         inputs=[
             components["input"]["text_input"],
+            components["model"]["model"],
             components["model"]["voice"],
             components["model"]["format"],
             components["model"]["speed"],
@@ -217,6 +228,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
         components["input"]["clear_files"].click(
             fn=clear_files,
             inputs=[
+                components["model"]["model"],
                 components["model"]["voice"],
                 components["model"]["format"],
                 components["model"]["speed"],
@@ -227,6 +239,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
                 components["input"]["file_preview"],
                 components["output"]["audio_output"],
                 components["output"]["output_files"],
+                components["model"]["model"],
                 components["model"]["voice"],
                 components["model"]["format"],
                 components["model"]["speed"],
@@ -248,6 +261,7 @@ def setup_event_handlers(components: dict, disable_local_saving: bool = False):
             fn=generate_from_file,
             inputs=[
                 components["input"]["file_select"],
+                components["model"]["model"],
                 components["model"]["voice"],
                 components["model"]["format"],
                 components["model"]["speed"],

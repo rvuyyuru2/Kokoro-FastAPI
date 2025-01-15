@@ -18,9 +18,19 @@ from .tts_model import TTSModel
 
 
 class TTSService:
-    def __init__(self, output_dir: str = None):
+    def __init__(self, output_dir: str = None, model_name: str = None):
         self.output_dir = output_dir
+        self.model_name = model_name
         self.model = TTSModel.get_instance()
+
+    def _get_model_path(self, model_name: str = None) -> Optional[str]:
+        """Get the path to a model file"""
+        if not model_name:
+            model_name = settings.default_onnx_model
+        model_path = os.path.join(settings.model_dir, model_name)
+        if not model_path.endswith('.onnx'):
+            model_path += '.onnx'
+        return model_path if os.path.exists(model_path) else None
 
     @staticmethod
     @lru_cache(maxsize=3)  # Cache up to 3 most recently used voices
@@ -45,7 +55,7 @@ class TTSService:
         return audio, processing_time
 
     def _generate_audio_internal(
-        self, text: str, voice: str, speed: float, stitch_long_output: bool = True
+        self, text: str, voice: str, speed: float, stitch_long_output: bool = True, model: str = None
     ) -> Tuple[torch.Tensor, float]:
         """Generate audio and measure processing time"""
         start_time = time.time()
@@ -63,6 +73,17 @@ class TTSService:
             voice_path = self._get_voice_path(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
+
+            # Get model path and initialize
+            model_path = self._get_model_path(model)
+            if not model_path:
+                raise ValueError(f"Model not found: {model}")
+
+            # Initialize model with the selected path
+            if model_path != TTSModel._current_model_path:
+                logger.info(f"Switching to model: {model_path}")
+                TTSModel.initialize(settings.model_dir, model_path=model_path)
+                TTSModel._current_model_path = model_path
 
             # Load voice using cached loader
             voicepack = self._load_voice(voice_path)
@@ -129,6 +150,7 @@ class TTSService:
         speed: float,
         output_format: str = "wav",
         silent=False,
+        model: str = None,
     ):
         """Generate and yield audio chunks as they're generated for real-time streaming"""
         try:
@@ -148,11 +170,21 @@ class TTSService:
                 f"Text preprocessing took: {(time.time() - preprocess_start)*1000:.1f}ms"
             )
 
-            # Voice validation and loading
+            # Model and voice validation and loading
             voice_start = time.time()
             voice_path = self._get_voice_path(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
+            model_path = self._get_model_path(model)
+            if not model_path:
+                raise ValueError(f"Model not found: {model}")
+
+            # Initialize model with the selected path
+            if model_path != TTSModel._current_model_path:
+                logger.info(f"Switching to model: {model_path}")
+                TTSModel.initialize(settings.model_dir, model_path=model_path)
+                TTSModel._current_model_path = model_path
+
             voicepack = self._load_voice(voice_path)
             logger.debug(
                 f"Voice loading took: {(time.time() - voice_start)*1000:.1f}ms"

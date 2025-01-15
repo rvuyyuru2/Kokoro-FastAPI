@@ -7,36 +7,50 @@ import requests
 from .config import API_URL, OUTPUTS_DIR
 
 
-def check_api_status() -> Tuple[bool, List[str]]:
-    """Check TTS service status and get available voices."""
+def check_api_status() -> Tuple[bool, List[str], List[str]]:
+    """Check TTS service status and get available voices and models."""
     try:
-        # Use a longer timeout during startup
-        response = requests.get(
+        # Get voices
+        voices_response = requests.get(
             f"{API_URL}/v1/audio/voices",
             timeout=30,  # Increased timeout for initial startup period
         )
-        response.raise_for_status()
-        voices = response.json().get("voices", [])
-        if voices:
-            return True, voices
-        print("No voices found in response")
-        return False, []
+        voices_response.raise_for_status()
+        voices = voices_response.json().get("voices", [])
+
+        # Get models
+        models_response = requests.get(
+            f"{API_URL}/models/list",
+            timeout=30,
+        )
+        models_response.raise_for_status()
+        models = models_response.json()
+
+        # Return what we have, even if some parts aren't ready
+        if not voices:
+            print("No voices found in response")
+        if not models:
+            print("No models found in response")
+            
+        # Consider service available if we got any response
+        is_available = bool(voices or models)
+        return is_available, voices or [], models or []
     except requests.exceptions.Timeout:
         print("API request timed out (waiting for service startup)")
-        return False, []
+        return False, [], []
     except requests.exceptions.ConnectionError as e:
         print(f"Connection error (service may be starting up): {str(e)}")
-        return False, []
+        return False, [], []
     except requests.exceptions.RequestException as e:
         print(f"API request failed: {str(e)}")
-        return False, []
+        return False, [], []
     except Exception as e:
         print(f"Unexpected error checking API status: {str(e)}")
-        return False, []
+        return False, [], []
 
 
 def text_to_speech(
-    text: str, voice_id: str | list, format: str, speed: float
+    text: str, voice_id: str | list, format: str, speed: float, model: str = None
 ) -> Optional[str]:
     """Generate speech from text using TTS API."""
     if not text.strip():
@@ -51,15 +65,18 @@ def text_to_speech(
     output_path = os.path.join(OUTPUTS_DIR, output_filename)
 
     try:
+        json_data = {
+            "input": text,
+            "voice": voice_str,
+            "response_format": format,
+            "speed": float(speed),
+        }
+        if model:
+            json_data["model"] = model
+
         response = requests.post(
             f"{API_URL}/v1/audio/speech",
-            json={
-                "model": "kokoro",
-                "input": text,
-                "voice": voice_str,
-                "response_format": format,
-                "speed": float(speed),
-            },
+            json=json_data,
             headers={"Content-Type": "application/json"},
             timeout=300,  # Longer timeout for speech generation
         )

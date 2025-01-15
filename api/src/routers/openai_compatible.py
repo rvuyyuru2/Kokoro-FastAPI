@@ -51,7 +51,8 @@ async def process_voices(
 async def stream_audio_chunks(
     tts_service: TTSService, 
     request: OpenAISpeechRequest,
-    client_request: Request
+    client_request: Request,
+    model: str = None,
 ) -> AsyncGenerator[bytes, None]:
     """Stream audio chunks as they're generated with client disconnect handling"""
     voice_to_use = await process_voices(request.voice, tts_service)
@@ -62,6 +63,7 @@ async def stream_audio_chunks(
             voice=voice_to_use,
             speed=request.speed,
             output_format=request.response_format,
+            model=model,
         ):
             # Check if client is still connected
             if await client_request.is_disconnected():
@@ -86,6 +88,9 @@ async def create_speech(
         # Process voice combination and validate
         voice_to_use = await process_voices(request.voice, tts_service)
 
+        # Get model name without extension
+        model_name = request.model.replace('.onnx', '')
+
         # Set content type based on format
         content_type = {
             "mp3": "audio/mpeg",
@@ -100,7 +105,7 @@ async def create_speech(
         if request.stream:
             # Stream audio chunks as they're generated
             return StreamingResponse(
-                stream_audio_chunks(tts_service, request, client_request),
+                stream_audio_chunks(tts_service, request, client_request, model=model_name),
                 media_type=content_type,
                 headers={
                     "Content-Disposition": f"attachment; filename=speech.{request.response_format}",
@@ -111,11 +116,12 @@ async def create_speech(
             )
         else:
             # Generate complete audio
-            audio, _ = tts_service._generate_audio(
+            audio, _ = tts_service._generate_audio_internal(
                 text=request.input,
                 voice=voice_to_use,
                 speed=request.speed,
                 stitch_long_output=True,
+                model=model_name,
             )
 
             # Convert to requested format

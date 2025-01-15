@@ -13,6 +13,7 @@ from loguru import logger
 from .core.config import settings
 from .routers.development import router as dev_router
 from .routers.openai_compatible import router as openai_router
+from .routers.models import router as models_router
 from .services.tts_model import TTSModel
 from .services.tts_service import TTSService
 
@@ -91,6 +92,7 @@ app.add_middleware(
 # Include routers
 app.include_router(openai_router, prefix="/v1")
 app.include_router(dev_router)  # New development endpoints
+app.include_router(models_router)  # Model management endpoints
 # app.include_router(text_router)  # Deprecated but still live for backwards compatibility
 
 

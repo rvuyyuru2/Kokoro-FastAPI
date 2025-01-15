@@ -43,7 +43,7 @@ async def test_setup_cuda_available(
     
     # Configure mock settings
     mock_settings.model_dir = "/mock/model/dir"
-    mock_settings.onnx_model_path = "model.onnx"
+    mock_settings.default_onnx_model = "model.onnx"
     mock_settings.voices_dir = "voices"
     
     # Configure mock warmup service
@@ -89,7 +89,7 @@ async def test_setup_cuda_unavailable(
     
     # Configure mock settings
     mock_settings.model_dir = "/mock/model/dir"
-    mock_settings.onnx_model_path = "model.onnx"
+    mock_settings.default_onnx_model = "model.onnx"
     mock_settings.voices_dir = "voices"
     
     # Configure mock warmup service

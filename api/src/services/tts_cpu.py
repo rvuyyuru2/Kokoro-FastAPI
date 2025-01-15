@@ -33,10 +33,13 @@ class TTSCPUModel(TTSBaseModel):
         if cls._onnx_session is None:
             try:
                 # Try loading ONNX model
-                onnx_path = os.path.join(model_dir, settings.onnx_model_path)
-                if not os.path.exists(onnx_path):
-                    logger.error(f"ONNX model not found at {onnx_path}")
-                    return None
+                if model_path and os.path.exists(model_path):
+                    onnx_path = model_path
+                else:
+                    onnx_path = os.path.join(model_dir, settings.default_onnx_model)
+                    if not os.path.exists(onnx_path):
+                        logger.error(f"ONNX model not found at {onnx_path}")
+                        return None
 
                 logger.info(f"Loading ONNX model from {onnx_path}")
 
@@ -79,14 +82,20 @@ class TTSCPUModel(TTSBaseModel):
                     }
                 }
 
-                session = InferenceSession(
-                    onnx_path,
-                    sess_options=session_options,
-                    providers=["CPUExecutionProvider"],
-                    provider_options=[provider_options],
-                )
-                cls._onnx_session = session
-                return session
+                # Reset session if switching models
+                if onnx_path != cls._current_model_path:
+                    cls._onnx_session = None
+                    cls._current_model_path = onnx_path
+
+                if cls._onnx_session is None:
+                    session = InferenceSession(
+                        onnx_path,
+                        sess_options=session_options,
+                        providers=["CPUExecutionProvider"],
+                        provider_options=[provider_options],
+                    )
+                    cls._onnx_session = session
+                return cls._onnx_session
             except Exception as e:
                 logger.error(f"Failed to initialize ONNX model: {e}")
                 return None

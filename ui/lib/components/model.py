@@ -5,10 +5,12 @@ import gradio as gr
 from .. import api, config
 
 
-def create_model_column(voice_ids: Optional[list] = None) -> Tuple[gr.Column, dict]:
+def create_model_column(voice_ids: Optional[list] = None, models: Optional[list] = None) -> Tuple[gr.Column, dict]:
     """Create the model settings column."""
     if voice_ids is None:
         voice_ids = []
+    if models is None:
+        models = []
 
     with gr.Column(scale=1) as col:
         gr.Markdown("### Model Settings")
@@ -16,6 +18,13 @@ def create_model_column(voice_ids: Optional[list] = None) -> Tuple[gr.Column, di
         # Status button starts in waiting state
         status_btn = gr.Button(
             "⌛ TTS Service: Waiting for Service...", variant="secondary"
+        )
+
+        model_input = gr.Dropdown(
+            choices=models,
+            label="Model",
+            value=models[0] if models else None,
+            interactive=True,
         )
 
         voice_input = gr.Dropdown(
@@ -34,6 +43,7 @@ def create_model_column(voice_ids: Optional[list] = None) -> Tuple[gr.Column, di
 
     components = {
         "status_btn": status_btn,
+        "model": model_input,
         "voice": voice_input,
         "format": format_input,
         "speed": speed_input,

@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     default_voice: str = "af"
     model_dir: str = "/app/models"  # Base directory for model files
     pytorch_model_path: str = "kokoro-v0_19.pth"
-    onnx_model_path: str = "kokoro-v0_19.onnx"
+    models_dir: str = "models"  # Directory for user-added ONNX models
+    default_onnx_model: str = "kokoro-v0_19.onnx"  # Default ONNX model name
     voices_dir: str = "voices"
     sample_rate: int = 24000
     max_chunk_size: int = 300  # Maximum size of text chunks for processing

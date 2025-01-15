@@ -9,7 +9,7 @@ from .components import create_input_column, create_model_column, create_output_
 def create_interface():
     """Create the main Gradio interface."""
     # Skip initial status check - let the timer handle it
-    is_available, available_voices = False, []
+    is_available, available_voices, available_models = False, [], []
 
     # Check if local saving is disabled
     disable_local_saving = os.getenv("DISABLE_LOCAL_SAVING", "false").lower() == "true"
@@ -28,8 +28,8 @@ def create_interface():
             # Create columns
             input_col, input_components = create_input_column(disable_local_saving)
             model_col, model_components = create_model_column(
-                available_voices
-            )  # Pass initial voices
+                available_voices, available_models
+            )  # Pass initial voices and models
             output_col, output_components = create_output_column(disable_local_saving)
 
             # Collect all components
@@ -45,15 +45,17 @@ def create_interface():
         # Add periodic status check with Timer
         def update_status():
             try:
-                is_available, voices = api.check_api_status()
+                is_available, voices, models = api.check_api_status()
                 status = "Available" if is_available else "Waiting for Service..."
 
-                if is_available and voices:
+                if is_available and voices and models:
                     # Service is available, update UI and stop timer
                     current_voice = components["model"]["voice"].value
-                    default_voice = (
-                        current_voice if current_voice in voices else voices[0]
-                    )
+                    current_model = components["model"]["model"].value
+                    
+                    default_voice = current_voice if current_voice in voices else voices[0]
+                    default_model = current_model if current_model in models else models[0]
+                    
                     # Return values in same order as outputs list
                     return [
                         gr.update(
@@ -61,6 +63,7 @@ def create_interface():
                             interactive=True,
                             variant="secondary",
                         ),
+                        gr.update(choices=models, value=default_model),
                         gr.update(choices=voices, value=default_voice),
                         gr.update(active=False),  # Stop timer
                     ]
@@ -72,6 +75,7 @@ def create_interface():
                         interactive=True,
                         variant="secondary",
                     ),
+                    gr.update(choices=[], value=None),
                     gr.update(choices=[], value=None),
                     gr.update(active=True),
                 ]
@@ -85,6 +89,7 @@ def create_interface():
                         variant="secondary",
                     ),
                     gr.update(choices=[], value=None),
+                    gr.update(choices=[], value=None),
                     gr.update(active=True),
                 ]
 
@@ -93,6 +98,7 @@ def create_interface():
             fn=update_status,
             outputs=[
                 components["model"]["status_btn"],
+                components["model"]["model"],
                 components["model"]["voice"],
                 timer,
             ],
