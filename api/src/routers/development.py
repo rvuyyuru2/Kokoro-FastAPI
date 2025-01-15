@@ -13,6 +13,7 @@ from ..structures.text_schemas import (
     PhonemeRequest,
     PhonemeResponse,
 )
+from ..utils.paths import get_voice_files
 
 router = APIRouter(tags=["text processing"])
 
@@ -83,8 +84,11 @@ async def generate_from_phonemes(
         )
 
     # Validate voice exists
-    voice_path = tts_service._get_voice_path(request.voice)
-    if not voice_path:
+    # voice_path = await tts_service._get_voice_path(request.voice)
+    voice_paths = await get_voice_files()
+    # voice_paths = [voice_path.stem for voice_path in voice_paths]
+    voice_path = next((voice_path for voice_path in voice_paths if request.voice in voice_path), None)
+    if not request.voice in voice_paths:
         raise HTTPException(
             status_code=400,
             detail={
@@ -92,11 +96,10 @@ async def generate_from_phonemes(
                 "message": f"Voice not found: {request.voice}",
             },
         )
-
+    
     try:
         # Load voice
         voicepack = tts_service._load_voice(voice_path)
-
         # Convert phonemes to tokens
         tokens = tokenize(request.phonemes)
         tokens = [0] + tokens + [0]  # Add start/end tokens

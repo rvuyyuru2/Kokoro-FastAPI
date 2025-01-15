@@ -11,34 +11,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
-# Create non-root user
-RUN useradd -m -u 1000 appuser
-
-# Create directories and set ownership
-RUN mkdir -p /app/models && \
-    mkdir -p /app/api/src/voices && \
+# Create non-root user and directories
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app/models \
+            /app/defaults \
+            /app/voices && \
     chown -R appuser:appuser /app
 
 USER appuser
+WORKDIR /app
 
-# Download and extract models
-WORKDIR /app/models
-RUN set -x && \
-    curl -L -o model.tar.gz https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.0.1/kokoro-82m-onnx.tar.gz && \
-    echo "Downloaded model.tar.gz:" && ls -lh model.tar.gz && \
-    tar xzf model.tar.gz && \
-    echo "Contents after extraction:" && ls -lhR && \
-    rm model.tar.gz && \
-    echo "Final contents:" && ls -lhR
+# Download default model files
+RUN cd /app/defaults && \
+    curl -L -o kokoro-v0_19.onnx "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/kokoro-v0_19.onnx"
+    # curl -L -o kokoro-v0_19.onnx "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/kokoro-v0_19.onnx" && \
 
-# Download and extract voice models
-WORKDIR /app/api/src/voices
-RUN curl -L -o voices.tar.gz https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.0.1/voice-models.tar.gz && \
-    tar xzf voices.tar.gz && \
-    rm voices.tar.gz
+RUN cd /app/defaults && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_bella.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_irulan.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_nicole.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_sarah.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_sky.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_adam.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_gurney.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_michael.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bf_emma.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bf_isabella.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bm_george.pt" && \
+    curl -LO "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bm_lewis.pt"
 
-# Switch back to app directory
 WORKDIR /app
 
 # Copy dependency files
@@ -61,6 +63,12 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app:/app/models
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_LINK_MODE=copy
+ENV ONNX_NUM_THREADS=8
+ENV ONNX_INTER_OP_THREADS=4
+ENV ONNX_EXECUTION_MODE=sequential
+ENV ONNX_OPTIMIZATION_LEVEL=all
+ENV ONNX_MEMORY_PATTERN=true
+ENV ONNX_ARENA_EXTEND_STRATEGY=kNextPowerOfTwo
 
 # Run FastAPI server
 CMD ["uv", "run", "python", "-m", "uvicorn", "api.src.main:app", "--host", "0.0.0.0", "--port", "8880", "--log-level", "debug"]

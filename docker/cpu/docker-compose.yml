@@ -1,17 +1,18 @@
 name: kokoro-tts
 services:
   kokoro-tts:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.1.0
-    # build:
-    #   context: ../..
-    #   dockerfile: docker/cpu/Dockerfile
+    # image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.1.0
+    build:
+      context: ../..
+      dockerfile: docker/cpu/Dockerfile
     volumes:
-      - ../../api/src:/app/api/src
-      - ../../api/src/voices:/app/api/src/voices
+      - ../../api/src:/app/api/src  # Mount src for development
+      - ./models:/app/models  # User's custom models overlay
+      - ./voices:/app/voices  # User's custom voices overlay
     ports:
       - "8880:8880"
     environment:
-      - PYTHONPATH=/app:/app/models
+      - PYTHONPATH=/app:/app/models:/app/defaults
       # ONNX Optimization Settings for vectorized operations
       - ONNX_NUM_THREADS=8  # Maximize core usage for vectorized ops
       - ONNX_INTER_OP_THREADS=4  # Higher inter-op for parallel matrix operations

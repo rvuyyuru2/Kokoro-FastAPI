@@ -111,7 +111,7 @@ async def create_speech(
             )
         else:
             # Generate complete audio
-            audio, _ = tts_service._generate_audio(
+            audio, proc_time = await tts_service._generate_audio(
                 text=request.input,
                 voice=voice_to_use,
                 speed=request.speed,

@@ -50,14 +50,6 @@ mock_onnx.GraphOptimizationLevel = Mock()
 mock_onnx.ExecutionMode = Mock()
 sys.modules["onnxruntime"] = mock_onnx
 
-# Create mock settings module
-mock_settings_module = Mock()
-mock_settings = Mock()
-mock_settings.model_dir = "/mock/model/dir"
-mock_settings.onnx_model_path = "mock.onnx"
-mock_settings_module.settings = mock_settings
-sys.modules["api.src.core.config"] = mock_settings_module
-
 
 class MockTTSModel:
     _instance = None

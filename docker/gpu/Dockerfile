@@ -14,29 +14,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser
-
-# Create directories and set ownership
-RUN mkdir -p /app/models && \
-    mkdir -p /app/api/src/voices && \
+# Create non-root user and directories
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app/models \
+            /app/defaults \
+            /app/voices && \
     chown -R appuser:appuser /app
 
 USER appuser
+WORKDIR /app
 
-# Download and extract models
-WORKDIR /app/models
-RUN curl -L -o model.tar.gz https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.0.1/kokoro-82m-pytorch.tar.gz && \
-    tar xzf model.tar.gz && \
-    rm model.tar.gz
+# Download default model files
+RUN cd /app/defaults && \
+    curl -L -o kokoro-v0_19.pth "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/kokoro-v0_19.pth"
 
-# Download and extract voice models
-WORKDIR /app/api/src/voices
-RUN curl -L -o voices.tar.gz https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.0.1/voice-models.tar.gz && \
-    tar xzf voices.tar.gz && \
-    rm voices.tar.gz
+RUN cd /app/defaults && \
+    curl -L -o af_bella.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af.pt" && \
+    curl -L -o af_bella.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_bella.pt" && \
+    curl -L -o af_irulan.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_irulan.pt" && \
+    curl -L -o af_nicole.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_nicole.pt" && \
+    curl -L -o af_sarah.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_sarah.pt" && \
+    curl -L -o af_sky.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_sky.pt" && \
+    curl -L -o am_adam.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_adam.pt" && \
+    curl -L -o am_gurney.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_gurney.pt" && \
+    curl -L -o am_michael.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_michael.pt" && \
+    curl -L -o bf_emma.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bf_emma.pt" && \
+    curl -L -o bf_isabella.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bf_isabella.pt" && \
+    curl -L -o bm_george.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bm_george.pt" && \
+    curl -L -o bm_lewis.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bm_lewis.pt"
 
-# Switch back to app directory
 WORKDIR /app
 
 # Copy dependency files

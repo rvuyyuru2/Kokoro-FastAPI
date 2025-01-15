@@ -4,6 +4,7 @@ import re
 import time
 from functools import lru_cache
 from typing import List, Optional, Tuple
+from pathlib import Path
 
 import aiofiles.os
 import numpy as np
@@ -12,6 +13,7 @@ import torch
 from loguru import logger
 
 from ..core.config import settings
+from ..utils.paths import get_voice_files
 from .audio import AudioNormalizer, AudioService
 from .text_processing import chunker, normalize_text
 from .tts_model import TTSModel
@@ -30,21 +32,24 @@ class TTSService:
             voice_path, map_location=TTSModel.get_device(), weights_only=True
         )
 
-    def _get_voice_path(self, voice_name: str) -> Optional[str]:
-        """Get the path to a voice file"""
-        voice_path = os.path.join(TTSModel.VOICES_DIR, f"{voice_name}.pt")
-        return voice_path if os.path.exists(voice_path) else None
+    async def _find_voice(self, voice_name: str) -> Optional[Path]:
+        """Find a voice file by name"""
+        voice_files = await get_voice_files()
+        for voice_file in voice_files:
+            if voice_file.stem == voice_name:
+                return voice_file
+        return None
 
-    def _generate_audio(
+    async def _generate_audio(
         self, text: str, voice: str, speed: float, stitch_long_output: bool = True
     ) -> Tuple[torch.Tensor, float]:
         """Generate complete audio and return with processing time"""
-        audio, processing_time = self._generate_audio_internal(
+        audio, processing_time = await self._generate_audio_internal(
             text, voice, speed, stitch_long_output
         )
         return audio, processing_time
 
-    def _generate_audio_internal(
+    async def _generate_audio_internal(
         self, text: str, voice: str, speed: float, stitch_long_output: bool = True
     ) -> Tuple[torch.Tensor, float]:
         """Generate audio and measure processing time"""
@@ -59,13 +64,11 @@ class TTSService:
                 raise ValueError("Text is empty after preprocessing")
             text = str(normalized)
 
-            # Check voice exists
-            voice_path = self._get_voice_path(voice)
+            # Find and load voice
+            voice_path = await self._find_voice(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
-
-            # Load voice using cached loader
-            voicepack = self._load_voice(voice_path)
+            voicepack = self._load_voice(str(voice_path))
 
             # For non-streaming, preprocess all chunks first
             if stitch_long_output:
@@ -150,10 +153,10 @@ class TTSService:
 
             # Voice validation and loading
             voice_start = time.time()
-            voice_path = self._get_voice_path(voice)
+            voice_path = await self._find_voice(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
-            voicepack = self._load_voice(voice_path)
+            voicepack = self._load_voice(str(voice_path))
             logger.debug(
                 f"Voice loading took: {(time.time() - voice_start)*1000:.1f}ms"
             )
@@ -226,9 +229,11 @@ class TTSService:
 
         for voice in voices:
             try:
-                voice_path = os.path.join(TTSModel.VOICES_DIR, f"{voice}.pt")
+                voice_path = await self._find_voice(voice)
+                if not voice_path:
+                    raise ValueError(f"Voice not found: {voice}")
                 voicepack = torch.load(
-                    voice_path, map_location=TTSModel.get_device(), weights_only=True
+                    str(voice_path), map_location=TTSModel.get_device(), weights_only=True
                 )
                 t_voices.append(voicepack)
                 v_name.append(voice)
@@ -239,7 +244,12 @@ class TTSService:
         try:
             f: str = "_".join(v_name)
             v = torch.mean(torch.stack(t_voices), dim=0)
-            combined_path = os.path.join(TTSModel.VOICES_DIR, f"{f}.pt")
+            
+            # Save to first available voice directory
+            voice_files = await get_voice_files()
+            if not voice_files:
+                raise RuntimeError("No voice directories available")
+            combined_path = str(voice_files[0].parent / f"{f}.pt")
 
             # Save combined voice
             try:
@@ -258,12 +268,9 @@ class TTSService:
 
     async def list_voices(self) -> List[str]:
         """List all available voices"""
-        voices = []
         try:
-            it = await aiofiles.os.scandir(TTSModel.VOICES_DIR)
-            for entry in it:
-                if entry.name.endswith(".pt"):
-                    voices.append(entry.name[:-3])  # Remove .pt extension
+            voice_files = await get_voice_files()
+            return sorted(voice_file.stem for voice_file in voice_files)
         except Exception as e:
             logger.error(f"Error listing voices: {str(e)}")
-        return sorted(voices)
+            return []
