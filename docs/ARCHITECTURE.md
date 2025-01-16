@@ -1,4 +1,4 @@
-# Kokoro TTS Architecture
+# FastKoko TTS Architecture
 
 ## Core Concepts
 
