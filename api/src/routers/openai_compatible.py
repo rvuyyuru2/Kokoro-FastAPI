@@ -1,9 +1,11 @@
 from typing import AsyncGenerator, List, Union
+import aiofiles.os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
+from ..core.config import settings
 from ..services.audio import AudioService
 from ..services.tts_service import TTSService
 from ..structures.schemas import OpenAISpeechRequest
@@ -62,6 +64,7 @@ async def stream_audio_chunks(
             voice=voice_to_use,
             speed=request.speed,
             output_format=request.response_format,
+            model=request.model,
         ):
             # Check if client is still connected
             if await client_request.is_disconnected():
@@ -110,11 +113,12 @@ async def create_speech(
                 },
             )
         else:
-            # Generate complete audio
+            # Generate complete audio with specified model
             audio, proc_time = await tts_service._generate_audio(
                 text=request.input,
                 voice=voice_to_use,
                 speed=request.speed,
+                model=request.model,
                 stitch_long_output=True,
             )
 
@@ -189,3 +193,29 @@ async def combine_voices(
         raise HTTPException(
             status_code=500, detail={"error": "Server error", "message": "Server error"}
         )
+
+
+@router.get("/models")
+async def list_models():
+    """List all available models in OpenAI format"""
+    try:
+        models = []
+        entries = await aiofiles.os.scandir(settings.model_dir)
+        
+        for entry in entries:
+            if entry.is_file() and entry.name.endswith(('.onnx', '.pth')):
+                stat = await aiofiles.os.stat(entry.path)
+                models.append({
+                    "id": entry.name.rsplit('.', 1)[0],
+                    "object": "model",
+                    "created": int(stat.st_ctime),
+                    "owned_by": entry.name.split('.')[-1]  # onnx or pth
+                })
+                
+        return {
+            "object": "list",
+            "data": models
+        }
+    except Exception as e:
+        logger.error(f"Error listing models: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -24,27 +24,6 @@ RUN useradd -m -u 1000 appuser && \
 USER appuser
 WORKDIR /app
 
-# Download default model files
-RUN cd /app/defaults && \
-    curl -L -o kokoro-v0_19.pth "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/kokoro-v0_19.pth"
-
-RUN cd /app/defaults && \
-    curl -L -o af_bella.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af.pt" && \
-    curl -L -o af_bella.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_bella.pt" && \
-    curl -L -o af_irulan.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_irulan.pt" && \
-    curl -L -o af_nicole.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_nicole.pt" && \
-    curl -L -o af_sarah.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_sarah.pt" && \
-    curl -L -o af_sky.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/af_sky.pt" && \
-    curl -L -o am_adam.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_adam.pt" && \
-    curl -L -o am_gurney.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_gurney.pt" && \
-    curl -L -o am_michael.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/am_michael.pt" && \
-    curl -L -o bf_emma.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bf_emma.pt" && \
-    curl -L -o bf_isabella.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bf_isabella.pt" && \
-    curl -L -o bm_george.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bm_george.pt" && \
-    curl -L -o bm_lewis.pt "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/bm_lewis.pt"
-
-WORKDIR /app
-
 # Copy dependency files
 COPY --chown=appuser:appuser pyproject.toml ./pyproject.toml
 
@@ -65,6 +44,13 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app:/app/models
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_LINK_MODE=copy
+ENV ONNX_NUM_THREADS=8
+ENV ONNX_INTER_OP_THREADS=4
+ENV ONNX_EXECUTION_MODE=sequential
+ENV ONNX_OPTIMIZATION_LEVEL=all
+ENV ONNX_MEMORY_PATTERN=true
+ENV ONNX_ARENA_EXTEND_STRATEGY=kNextPowerOfTwo
+ENV CUDA_VISIBLE_DEVICES=0
 
 # Run FastAPI server
 CMD ["uv", "run", "python", "-m", "uvicorn", "api.src.main:app", "--host", "0.0.0.0", "--port", "8880", "--log-level", "debug"]

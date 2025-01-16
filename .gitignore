@@ -37,6 +37,7 @@ ENV/
 
 *.pth
 *.tar*
+*.onnx
 
 # Audio files
 examples/*.wav

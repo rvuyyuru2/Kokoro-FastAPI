@@ -17,20 +17,47 @@ from ..utils.paths import get_voice_files
 from .audio import AudioNormalizer, AudioService
 from .text_processing import chunker, normalize_text
 from .tts_model import TTSModel
+from .model_manager import ModelManager
 
 
 class TTSService:
+    """Text-to-Speech service with concurrent model management"""
+    
+    # Singleton instance management
+    _instance = None
+    _model_manager = None
+    
     def __init__(self, output_dir: str = None):
         self.output_dir = output_dir
-        self.model = TTSModel.get_instance()
+        if TTSService._model_manager is None:
+            TTSService._model_manager = ModelManager(TTSModel)
+        self.model_manager = TTSService._model_manager
 
-    @staticmethod
+    @classmethod
+    async def shutdown_service(cls):
+        """Gracefully shutdown the service and cleanup resources"""
+        if cls._model_manager:
+            await cls._model_manager.shutdown()
+            cls._model_manager = None
+
+    def _get_language_from_voice(self, voice: str) -> str:
+        """Map voice prefix to phonemizer language code"""
+        if voice.startswith('b'):
+            return 'b'  # British English
+        elif voice.startswith('j'):
+            return 'j'  # Japanese
+        return 'a'  # default to US English (voice starts with 'a' or other)
+
     @lru_cache(maxsize=3)  # Cache up to 3 most recently used voices
-    def _load_voice(voice_path: str) -> torch.Tensor:
+    async def _load_voice(self, voice_path: str, model_name: str = None) -> torch.Tensor:
         """Load and cache a voice model"""
-        return torch.load(
-            voice_path, map_location=TTSModel.get_device(), weights_only=True
-        )
+        model = await self.model_manager.get_model(model_name)
+        try:
+            return torch.load(
+                voice_path, map_location=model.get_device(), weights_only=True
+            )
+        finally:
+            self.model_manager.release_model(model)
 
     async def _find_voice(self, voice_name: str) -> Optional[Path]:
         """Find a voice file by name"""
@@ -41,18 +68,9 @@ class TTSService:
         return None
 
     async def _generate_audio(
-        self, text: str, voice: str, speed: float, stitch_long_output: bool = True
+        self, text: str, voice: str, speed: float, model: str = None, stitch_long_output: bool = True
     ) -> Tuple[torch.Tensor, float]:
         """Generate complete audio and return with processing time"""
-        audio, processing_time = await self._generate_audio_internal(
-            text, voice, speed, stitch_long_output
-        )
-        return audio, processing_time
-
-    async def _generate_audio_internal(
-        self, text: str, voice: str, speed: float, stitch_long_output: bool = True
-    ) -> Tuple[torch.Tensor, float]:
-        """Generate audio and measure processing time"""
         start_time = time.time()
 
         try:
@@ -68,7 +86,7 @@ class TTSService:
             voice_path = await self._find_voice(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
-            voicepack = self._load_voice(str(voice_path))
+            voicepack = await self._load_voice(str(voice_path), model)
 
             # For non-streaming, preprocess all chunks first
             if stitch_long_output:
@@ -76,8 +94,13 @@ class TTSService:
                 chunks_data = []
                 for chunk in chunker.split_text(text):
                     try:
-                        phonemes, tokens = TTSModel.process_text(chunk, voice[0])
-                        chunks_data.append((chunk, tokens))
+                        language = self._get_language_from_voice(voice)
+                        model = await self.model_manager.get_model(model)
+                        try:
+                            phonemes, tokens = model.process_text(chunk, language)
+                            chunks_data.append((chunk, tokens))
+                        finally:
+                            self.model_manager.release_model(model)
                     except Exception as e:
                         logger.error(
                             f"Failed to process chunk: '{chunk}'. Error: {str(e)}"
@@ -91,9 +114,13 @@ class TTSService:
                 audio_chunks = []
                 for chunk, tokens in chunks_data:
                     try:
-                        chunk_audio = TTSModel.generate_from_tokens(
-                            tokens, voicepack, speed
-                        )
+                        model = await self.model_manager.get_model(model)
+                        try:
+                            chunk_audio = model.generate_from_tokens(
+                                tokens, voicepack, speed
+                            )
+                        finally:
+                            self.model_manager.release_model(model)
                         if chunk_audio is not None:
                             audio_chunks.append(chunk_audio)
                         else:
@@ -115,8 +142,13 @@ class TTSService:
                 )
             else:
                 # Process single chunk
-                phonemes, tokens = TTSModel.process_text(text, voice[0])
-                audio = TTSModel.generate_from_tokens(tokens, voicepack, speed)
+                language = self._get_language_from_voice(voice)
+                model = await self.model_manager.get_model()
+                try:
+                    phonemes, tokens = model.process_text(text, language)
+                    audio = model.generate_from_tokens(tokens, voicepack, speed)
+                finally:
+                    self.model_manager.release_model(model)
 
             processing_time = time.time() - start_time
             return audio, processing_time
@@ -132,6 +164,7 @@ class TTSService:
         speed: float,
         output_format: str = "wav",
         silent=False,
+        model: str = None,
     ):
         """Generate and yield audio chunks as they're generated for real-time streaming"""
         try:
@@ -156,7 +189,7 @@ class TTSService:
             voice_path = await self._find_voice(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
-            voicepack = self._load_voice(str(voice_path))
+            voicepack = await self._load_voice(str(voice_path), model)
             logger.debug(
                 f"Voice loading took: {(time.time() - voice_start)*1000:.1f}ms"
             )
@@ -174,10 +207,15 @@ class TTSService:
                 chunks_processed += 1
                 try:
                     # Process text and generate audio
-                    phonemes, tokens = TTSModel.process_text(current_chunk, voice[0])
-                    chunk_audio = TTSModel.generate_from_tokens(
-                        tokens, voicepack, speed
-                    )
+                    language = self._get_language_from_voice(voice)
+                    model = await self.model_manager.get_model(model)
+                    try:
+                        phonemes, tokens = model.process_text(current_chunk, language)
+                        chunk_audio = model.generate_from_tokens(
+                            tokens, voicepack, speed
+                        )
+                    finally:
+                        self.model_manager.release_model(model)
 
                     if chunk_audio is not None:
                         # Convert chunk with proper streaming header handling
@@ -232,9 +270,13 @@ class TTSService:
                 voice_path = await self._find_voice(voice)
                 if not voice_path:
                     raise ValueError(f"Voice not found: {voice}")
-                voicepack = torch.load(
-                    str(voice_path), map_location=TTSModel.get_device(), weights_only=True
-                )
+                model = await self.model_manager.get_model()
+                try:
+                    voicepack = torch.load(
+                        str(voice_path), map_location=model.get_device(), weights_only=True
+                    )
+                finally:
+                    self.model_manager.release_model(model)
                 t_voices.append(voicepack)
                 v_name.append(voice)
             except Exception as e:

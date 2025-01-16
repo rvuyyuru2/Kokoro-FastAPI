@@ -140,14 +140,15 @@ class TTSGPUModel(TTSBaseModel):
         """Initialize PyTorch model for GPU inference"""
         if cls._instance is None and torch.cuda.is_available():
             try:
-                logger.info("Initializing GPU model")
-                model_path = os.path.join(model_dir, settings.pytorch_model_path)
+                logger.info(f"Initializing GPU model from: {model_path}")
                 model = build_model(model_path, cls._device)
+                if model is None:
+                    raise RuntimeError(f"Failed to load model from {model_path}")
                 cls._instance = model
                 return model
             except Exception as e:
                 logger.error(f"Failed to initialize GPU model: {e}")
-                return None
+                raise RuntimeError(f"Failed to initialize GPU model: {e}")
         return cls._instance
 
     @classmethod

@@ -338,8 +338,16 @@ def recursive_munch(d):
         return d
 
 def build_model(path, device):
-    config = Path(__file__).parent / 'config.json'
-    assert config.exists(), f'Config path incorrect: config.json not found at {config}'
+    # Get config from same directory as model
+    model_dir = Path(path).parent
+    config = model_dir / 'config.json'
+    if not config.exists():
+        # Fallback to default config only if no model-specific config exists
+        config = Path(__file__).parent / 'config.json'
+    
+    if not config.exists():
+        raise RuntimeError(f"No config found for model {path}")
+        
     with open(config, 'r') as r:
         args = recursive_munch(json.load(r))
     assert args.decoder.type == 'istftnet', f'Unknown decoder type: {args.decoder.type}'
@@ -365,11 +373,24 @@ def build_model(path, device):
         decoder=decoder.to(device).eval(),
         text_encoder=text_encoder.to(device).eval(),
     )
-    for key, state_dict in torch.load(path, map_location='cpu', weights_only=True)['net'].items():
-        assert key in model, key
-        try:
-            model[key].load_state_dict(state_dict)
-        except:
-            state_dict = {k[7:]: v for k, v in state_dict.items()}
-            model[key].load_state_dict(state_dict, strict=False)
-    return model
+    try:
+        checkpoint = torch.load(path, map_location='cpu', weights_only=True)
+        if 'net' not in checkpoint:
+            raise RuntimeError(f"Invalid model file format: {path}")
+            
+        for key, state_dict in checkpoint['net'].items():
+            if key not in model:
+                raise RuntimeError(f"Invalid model structure - missing component: {key}")
+            try:
+                model[key].load_state_dict(state_dict)
+            except Exception as e:
+                # Only try prefix removal if that's the actual issue
+                if any(k.startswith('module.') for k in state_dict.keys()):
+                    state_dict = {k[7:]: v for k, v in state_dict.items()}
+                    model[key].load_state_dict(state_dict, strict=False)
+                else:
+                    raise RuntimeError(f"Failed to load model component {key}: {str(e)}")
+        return model
+        
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model from {path}: {str(e)}")

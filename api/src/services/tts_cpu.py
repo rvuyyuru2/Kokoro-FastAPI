@@ -16,29 +16,27 @@ from .tts_base import TTSBaseModel
 
 
 class TTSCPUModel(TTSBaseModel):
-    _instance = None
-    _onnx_session = None
-    _device = "cpu"
+    def __init__(self):
+        super().__init__()
+        self._onnx_session = None
+        self._device = "cpu"
 
-    @classmethod
-    def get_instance(cls):
+    def get_instance(self):
         """Get the model instance"""
-        if cls._onnx_session is None:
+        if self._onnx_session is None:
             raise RuntimeError("ONNX model not initialized. Call initialize() first.")
-        return cls._onnx_session
+        return self._onnx_session
 
-    @classmethod
-    def initialize(cls, model_dir: str, model_path: str = None):
+    def initialize(self, model_dir: str, model_path: str = None):
         """Initialize ONNX model for CPU inference"""
-        if cls._onnx_session is None:
+        if self._onnx_session is None:
             try:
                 # Try loading ONNX model
-                onnx_path = os.path.join(model_dir, settings.onnx_model_path)
-                if not os.path.exists(onnx_path):
-                    logger.error(f"ONNX model not found at {onnx_path}")
-                    return None
+                if not os.path.exists(model_path):
+                    logger.error(f"ONNX model not found at {model_path}")
+                    raise RuntimeError(f"ONNX model not found at {model_path}")
 
-                logger.info(f"Loading ONNX model from {onnx_path}")
+                logger.info(f"Loading ONNX model from {model_path}")
 
                 # Configure ONNX session for optimal performance
                 session_options = SessionOptions()
@@ -80,20 +78,19 @@ class TTSCPUModel(TTSBaseModel):
                 }
 
                 session = InferenceSession(
-                    onnx_path,
+                    model_path,
                     sess_options=session_options,
                     providers=["CPUExecutionProvider"],
                     provider_options=[provider_options],
                 )
-                cls._onnx_session = session
+                self._onnx_session = session
                 return session
             except Exception as e:
                 logger.error(f"Failed to initialize ONNX model: {e}")
                 return None
-        return cls._onnx_session
+        return self._onnx_session
 
-    @classmethod
-    def process_text(cls, text: str, language: str) -> tuple[str, list[int]]:
+    def process_text(self, text: str, language: str) -> tuple[str, list[int]]:
         """Process text into phonemes and tokens
 
         Args:
@@ -108,9 +105,8 @@ class TTSCPUModel(TTSBaseModel):
         tokens = [0] + tokens + [0]  # Add start/end tokens
         return phonemes, tokens
 
-    @classmethod
     def generate_from_text(
-        cls, text: str, voicepack: torch.Tensor, language: str, speed: float
+        self, text: str, voicepack: torch.Tensor, language: str, speed: float
     ) -> tuple[np.ndarray, str]:
         """Generate audio from text
 
@@ -123,20 +119,19 @@ class TTSCPUModel(TTSBaseModel):
         Returns:
             tuple[np.ndarray, str]: Generated audio samples and phonemes
         """
-        if cls._onnx_session is None:
+        if self._onnx_session is None:
             raise RuntimeError("ONNX model not initialized")
 
         # Process text
-        phonemes, tokens = cls.process_text(text, language)
+        phonemes, tokens = self.process_text(text, language)
 
         # Generate audio
-        audio = cls.generate_from_tokens(tokens, voicepack, speed)
+        audio = self.generate_from_tokens(tokens, voicepack, speed)
 
         return audio, phonemes
 
-    @classmethod
     def generate_from_tokens(
-        cls, tokens: list[int], voicepack: torch.Tensor, speed: float
+        self, tokens: list[int], voicepack: torch.Tensor, speed: float
     ) -> np.ndarray:
         """Generate audio from tokens
 
@@ -148,7 +143,7 @@ class TTSCPUModel(TTSBaseModel):
         Returns:
             np.ndarray: Generated audio samples
         """
-        if cls._onnx_session is None:
+        if self._onnx_session is None:
             raise RuntimeError("ONNX model not initialized")
 
         # Pre-allocate and prepare inputs
@@ -161,7 +156,7 @@ class TTSCPUModel(TTSBaseModel):
         )  # More efficient than ones * speed
 
         # Run inference with optimized inputs
-        result = cls._onnx_session.run(
+        result = self._onnx_session.run(
             None, {"tokens": tokens_input, "style": style_input, "speed": speed_input}
         )
         return result[0]

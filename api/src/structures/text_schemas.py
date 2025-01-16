@@ -17,3 +17,6 @@ class GenerateFromPhonemesRequest(BaseModel):
     speed: float = Field(
         default=1.0, ge=0.1, le=5.0, description="Speed factor for generation"
     )
+    model: str = Field(
+        default=None, description="Model ID to use for generation. If not specified, uses default model."
+    )

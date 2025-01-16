@@ -11,15 +11,15 @@ speech_file_path = Path(__file__).parent / "speech.mp3"
 
 
 def main() -> None:
+    print(openai.models.list())
     stream_to_speakers()
-
     # Create text-to-speech audio file
-    with openai.audio.speech.with_streaming_response.create(
-        model="kokoro",
-        voice="af_bella",
-        input="the quick brown fox jumped over the lazy dogs",
-    ) as response:
-        response.stream_to_file(speech_file_path)
+    # with openai.audio.speech.with_streaming_response.create(
+    #     model="kokoro",
+    #     voice="af_bella",
+    #     input="the quick brown fox jumped over the lazy dogs",
+    # ) as response:
+    #     response.stream_to_file(speech_file_path)
 
 
 def stream_to_speakers() -> None:
@@ -32,7 +32,7 @@ def stream_to_speakers() -> None:
     start_time = time.time()
 
     with openai.audio.speech.with_streaming_response.create(
-        model="kokoro",
+        model="kokoro-v0_sdfsf19",
         voice="af_bella",
         response_format="pcm",  # similar to WAV, but without a header chunk at the start.
         input="""I see skies of blue and clouds of white

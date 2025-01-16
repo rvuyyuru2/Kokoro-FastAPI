@@ -13,7 +13,6 @@ from loguru import logger
 from .core.config import settings
 from .routers.development import router as dev_router
 from .routers.openai_compatible import router as openai_router
-from .services.tts_model import TTSModel
 from .services.tts_service import TTSService
 
 
@@ -39,16 +38,18 @@ def setup_logger():
 # Configure logger
 setup_logger()
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for model initialization"""
-    logger.info("Loading TTS model and voice packs...")
+    """Lifespan context manager for service initialization"""
+    logger.info("Initializing TTS service...")
 
-    # Initialize the main model with warm-up
-    voicepack_count = await TTSModel.setup()
-    # boundary = "█████╗"*9
-    boundary = "░" * 2*12
-    startup_msg = f"""
+    # Initialize service and get a model to verify setup
+    service = TTSService()
+    model = await service.model_manager.get_model()
+    try:
+        boundary = "░" * 2*12
+        startup_msg = f"""
 
 {boundary}
 
@@ -61,13 +62,21 @@ async def lifespan(app: FastAPI):
 
 {boundary}
                 """
-    # TODO: Improve CPU warmup, threads, memory, etc
-    startup_msg += f"\nModel warmed up on {TTSModel.get_device()}"
-    startup_msg += f"\n{voicepack_count} voice packs loaded\n"
-    startup_msg += f"\n{boundary}\n"
-    logger.info(startup_msg)
+        startup_msg += f"\nModel pool initialized on {model.get_device()}"
+        startup_msg += f"\nMax concurrent instances: {settings.max_model_instances}"
+        if settings.cuda_stream_per_instance and model.get_device() == "cuda":
+            startup_msg += f"\nUsing separate CUDA streams per instance"
+        startup_msg += f"\n{boundary}\n"
+        logger.info(startup_msg)
+    finally:
+        service.model_manager.release_model(model)
 
-    yield
+    try:
+        yield
+    finally:
+        # Cleanup on shutdown
+        logger.info("Shutting down TTS service...")
+        await TTSService.shutdown_service()
 
 
 # Initialize FastAPI app
@@ -91,7 +100,6 @@ app.add_middleware(
 # Include routers
 app.include_router(openai_router, prefix="/v1")
 app.include_router(dev_router)  # New development endpoints
-# app.include_router(text_router)  # Deprecated but still live for backwards compatibility
 
 
 # Health check endpoint

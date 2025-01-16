@@ -98,8 +98,8 @@ async def generate_from_phonemes(
         )
     
     try:
-        # Load voice
-        voicepack = tts_service._load_voice(voice_path)
+        # Load voice with specified model
+        voicepack = await tts_service._load_voice(voice_path, request.model)
         # Convert phonemes to tokens
         tokens = tokenize(request.phonemes)
         tokens = [0] + tokens + [0]  # Add start/end tokens

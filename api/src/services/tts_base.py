@@ -1,25 +1,27 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-import threading
-from typing import List, Tuple
+import asyncio
+from typing import List, Tuple, Optional
 
 import numpy as np
 import torch
 from loguru import logger
 
-from ..utils.paths import get_model_files, get_warmup_text
-from .warmup import warmup_model
+from ..utils.paths import get_model_files
 
 
 class TTSBaseModel(ABC):
-    _instance = None
-    _lock = threading.Lock()
-    _device = None
+    """Base class for TTS models with resource management"""
+    
+    def __init__(self):
+        self._device = None
+        self._model = None
+        self._lock = asyncio.Lock()
+        self._busy = False
 
-    @classmethod
-    async def setup(cls):
-        """Initialize model and setup voices"""
-        with cls._lock:
+    async def setup(self, model_path: Optional[str] = None):
+        """Initialize model"""
+        async with self._lock:
             # Set device
             cuda_available = torch.cuda.is_available()
             logger.info(f"CUDA available: {cuda_available}")
@@ -28,54 +30,53 @@ class TTSBaseModel(ABC):
                     # Test CUDA device
                     test_tensor = torch.zeros(1).cuda()
                     logger.info("CUDA test successful")
-                    cls._device = "cuda"
+                    self._device = "cuda"
                 except Exception as e:
                     logger.error(f"CUDA test failed: {e}")
-                    cls._device = "cpu"
+                    self._device = "cpu"
             else:
-                cls._device = "cpu"
+                self._device = "cpu"
             
-            # Initialize model # TODO: Reconsider GPU ONNX
-            is_onnx = cls._device == "cpu"
-            suffix = ".onnx" if is_onnx else ".pth"
+            # Initialize model
+            is_onnx = self._device == "cpu"
+            required_suffix = ".onnx" if is_onnx else ".pth"
             
-            # Find model files
-            model_files = await get_model_files(suffix)
-            if not model_files:
-                raise RuntimeError(f"Could not find any {suffix} models in search paths")
+            if model_path is not None:
+                # When specific model requested, validate exact match with correct extension
+                requested_path = Path(model_path)
+                model_files = await get_model_files(required_suffix)
+                matching_model = next((f for f in model_files if f.stem == requested_path.stem), None)
                 
-            # Use first available model
-            model_file = model_files[0]
-            model_path = str(model_file)
-            logger.info(f"Initializing model on {cls._device} using: {model_path}")
-            model = cls.initialize(str(model_file.parent), model_path=model_path)
-            if model is None:
-                raise RuntimeError(f"Failed to initialize {cls._device.upper()} model")
-            cls._instance = model
+                if not matching_model:
+                    available_models = ", ".join(f.stem for f in model_files)
+                    error_msg = f"Model '{requested_path.stem}' not found with {required_suffix} extension. Available models: {available_models}"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                    
+                model_path = str(matching_model)
+            else:
+                # Default model selection only if no model specified
+                model_files = await get_model_files(required_suffix)
+                if not model_files:
+                    logger.error(f"Could not find any {required_suffix} models in search paths")
+                    raise RuntimeError(f"Could not find any {required_suffix} models in search paths")
+                model_path = str(model_files[0])
 
-            # Load warmup text
-            warmup_text, _ = await get_warmup_text()
+            logger.info(f"Initializing model on {self._device} using: {model_path}")
+            model_dir = str(Path(model_path).parent)
+            self._model = self.initialize(model_dir, model_path=model_path)
+            if self._model is None:
+                raise RuntimeError(f"Failed to initialize {self._device.upper()} model")
+            
+            logger.info("Model initialization complete")
 
-            # Import here to avoid circular import
-            # from .tts_service import TTSService
-
-            # Create service and warm up
-            voice_count = await warmup_model(warmup_text)
-
-            logger.info("Model warm-up complete")
-
-            # Return number of loaded voices
-            return voice_count
-
-    @classmethod
     @abstractmethod
-    def initialize(cls, model_dir: str, model_path: str = None):
+    def initialize(self, model_dir: str, model_path: str = None):
         """Initialize the model"""
         pass
 
-    @classmethod
     @abstractmethod
-    def process_text(cls, text: str, language: str) -> Tuple[str, List[int]]:
+    def process_text(self, text: str, language: str) -> Tuple[str, List[int]]:
         """Process text into phonemes and tokens
 
         Args:
@@ -87,10 +88,9 @@ class TTSBaseModel(ABC):
         """
         pass
 
-    @classmethod
     @abstractmethod
     def generate_from_text(
-        cls, text: str, voicepack: torch.Tensor, language: str, speed: float
+        self, text: str, voicepack: torch.Tensor, language: str, speed: float
     ) -> Tuple[np.ndarray, str]:
         """Generate audio from text
 
@@ -105,10 +105,9 @@ class TTSBaseModel(ABC):
         """
         pass
 
-    @classmethod
     @abstractmethod
     def generate_from_tokens(
-        cls, tokens: List[int], voicepack: torch.Tensor, speed: float
+        self, tokens: List[int], voicepack: torch.Tensor, speed: float
     ) -> np.ndarray:
         """Generate audio from tokens
 
@@ -122,9 +121,29 @@ class TTSBaseModel(ABC):
         """
         pass
 
-    @classmethod
-    def get_device(cls):
+    def get_device(self):
         """Get the current device"""
-        if cls._device is None:
+        if self._device is None:
             raise RuntimeError("Model not initialized. Call setup() first.")
-        return cls._device
+        return self._device
+
+    async def acquire(self):
+        """Mark model as busy"""
+        await self._lock.acquire()
+        self._busy = True
+
+    def release(self):
+        """Mark model as available"""
+        self._busy = False
+        self._lock.release()
+
+    def cache_clear(self):
+        """Clear any cached data"""
+        if hasattr(self, '_load_voice'):
+            self._load_voice.cache_clear()
+        # Clear any other caches specific to subclasses
+        
+    @property
+    def is_busy(self) -> bool:
+        """Check if model is currently processing"""
+        return self._busy
