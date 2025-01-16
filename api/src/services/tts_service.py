@@ -3,7 +3,7 @@ import os
 import re
 import time
 from functools import lru_cache
-from typing import List, Optional, Tuple, AsyncGenerator, Union
+from typing import List, Optional, Tuple, AsyncGenerator, Union, Dict, Any
 from pathlib import Path
 
 import aiofiles.os
@@ -18,8 +18,10 @@ from .audio import AudioNormalizer, AudioService
 from .text_processing import chunker, normalize_text
 from .tts_model import TTSModel
 from .model_manager import ModelManager
+from .service_interfaces import TTSServiceProtocol
 from .tts_interface import TTSServiceInterface
 from .audio_strategies.strategy_factory import AudioStrategyFactory
+from .style_strategies import StyleStrategyFactory
 
 
 class TTSService(TTSServiceInterface):
@@ -34,7 +36,8 @@ class TTSService(TTSServiceInterface):
         if TTSService._model_manager is None:
             TTSService._model_manager = ModelManager(TTSModel)
         self._model_manager = TTSService._model_manager
-        self.strategy_factory = AudioStrategyFactory(self)
+        self.audio_strategy_factory = AudioStrategyFactory(self)
+        self.style_strategy_factory = StyleStrategyFactory(self)
 
     @property
     def model_manager(self) -> ModelManager:
@@ -110,7 +113,7 @@ class TTSService(TTSServiceInterface):
             await self._validate_model(model)
             
         try:
-            strategy = self.strategy_factory.get_strategy("default_stitch")
+            strategy = self.audio_strategy_factory.get_strategy("default_stitch")
             async for audio_bytes in strategy.process_audio(
                 text=text,
                 voice=voice,
@@ -138,7 +141,7 @@ class TTSService(TTSServiceInterface):
             await self._validate_model(model)
             
         try:
-            audio_strategy = self.strategy_factory.get_strategy(strategy)
+            audio_strategy = self.audio_strategy_factory.get_strategy(strategy)
             async for chunk in audio_strategy.process_audio(
                 text=text,
                 voice=voice,
@@ -151,52 +154,54 @@ class TTSService(TTSServiceInterface):
             logger.error(f"Error in audio generation: {str(e)}")
             raise
 
-    async def combine_voices(self, voices: List[str]) -> str:
-        """Combine multiple voices into a new voice"""
-        if len(voices) < 2:
-            raise ValueError("At least 2 voices are required for combination")
-
-        # Load voices
-        t_voices: List[torch.Tensor] = []
-        v_name: List[str] = []
-
-        for voice in voices:
-            try:
-                voice_path = await self._find_voice(voice)
-                if not voice_path:
-                    raise ValueError(f"Voice not found: {voice}")
-                model = await self.model_manager.get_model()
-                try:
-                    voicepack = torch.load(
-                        str(voice_path), map_location=model.get_device(), weights_only=True
-                    )
-                finally:
-                    self.model_manager.release_model(model)
-                t_voices.append(voicepack)
-                v_name.append(voice)
-            except Exception as e:
-                raise ValueError(f"Failed to load voice {voice}: {str(e)}")
-
-        # Combine voices
-        try:
-            f: str = "_".join(v_name)
-            v = torch.mean(torch.stack(t_voices), dim=0)
+    async def generate_style(self, strategy_name: str, **kwargs) -> torch.Tensor:
+        """Generate a voice style using the specified strategy
+        
+        Args:
+            strategy_name: Name of the style generation strategy to use
+            **kwargs: Strategy-specific parameters
             
-            # Save combined voice
-            try:
-                combined_path = str(Path(settings.voices_dir) / f"{f}.pt")
-                torch.save(v, combined_path)
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to save combined voice to {combined_path}: {str(e)}"
-                )
+        Returns:
+            torch.Tensor: The generated voice style tensor
+        """
+        try:
+            strategy = self.style_strategy_factory.get_strategy(strategy_name)
+            strategy.validate_params(kwargs)
+            return await strategy.generate_style(**kwargs)
+        except Exception as e:
+            logger.error(f"Error in style generation: {str(e)}")
+            raise
 
-            return f
-
+    async def combine_voices(self, voices: List[str]) -> str:
+        """Combine multiple voices into a new voice
+        
+        This is a convenience wrapper around the combine strategy
+        that maintains backward compatibility
+        """
+        try:
+            output_name = "_".join(voices)
+            await self.generate_style(
+                "combine",
+                voices=voices,
+                output_name=output_name
+            )
+            return output_name
         except Exception as e:
             if not isinstance(e, (ValueError, RuntimeError)):
                 raise RuntimeError(f"Error combining voices: {str(e)}")
             raise
+
+    def list_style_strategies(self) -> Dict[str, Any]:
+        """List all available style generation strategies
+        
+        Returns:
+            Dict mapping strategy names to their required parameters
+        """
+        strategies = {}
+        for name, strategy_class in self.style_strategy_factory.list_strategies().items():
+            strategy = strategy_class(self)
+            strategies[name] = strategy.get_required_params()
+        return strategies
 
     async def list_voices(self) -> List[str]:
         """List all available voices"""

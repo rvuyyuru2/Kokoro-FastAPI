@@ -1,49 +1,49 @@
-<p align="center">
-  <img src="githubbanner.png" alt="Kokoro TTS Banner">
-</p>
+# Kokoro TTS
 
-# <sub><sub>_`FastKoko`_ </sub></sub>
-[![Tests](https://img.shields.io/badge/tests-117%20passed-darkgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-60%25-grey)]()
-[![Tested at Model Commit](https://img.shields.io/badge/last--tested--model--commit-a67f113-blue)](https://huggingface.co/hexgrad/Kokoro-82M/tree/c3b0d86e2a980e027ef71c28819ea02e351c2667) [![Try on Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Try%20on-Spaces-blue)](https://huggingface.co/spaces/Remsky/Kokoro-TTS-Zero)
+A flexible text-to-speech system with support for multiple languages and voice styles.
 
-Dockerized FastAPI wrapper for [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) text-to-speech model
-- OpenAI-compatible Speech endpoint, with inline voice combination functionality
-- NVIDIA GPU accelerated or CPU Onnx inference 
-- very fast generation time
-  - 100x+ real time speed via HF A100
-  - 35-50x+ real time speed via 4060Ti
-  - 5x+ real time speed via M3 Pro CPU
-- streaming support w/ variable chunking to control latency & artifacts
-- simple audio generation web ui utility
-- (new) phoneme endpoints for conversion and generation
+## Overview
 
+Kokoro TTS uses a plugin-based architecture that breaks down text-to-speech processing into small, composable pieces:
+
+```
+Text → Chunks → Phonemes → Tokens → Audio
+```
+
+Each step can be customized with different strategies:
+
+- **Chunking**: How to split text (static, dynamic, ML-based)
+- **Phonemization**: Converting text to sounds (espeak, language-specific)
+- **Tokenization**: Converting sounds to model tokens (basic, BPE, SentencePiece)
+- **Audio**: Generating speech (streaming, batch processing)
+- **Style**: Voice manipulation (combining, pitch shifting, etc.)
 
 ## Quick Start
 
-The service can be accessed through either the API endpoints or the Gradio web interface.
+```python
+from kokoro_tts import TTSService
 
-1. Install prerequisites, and start the service using Docker Compose (Full setup including UI):
-   - Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-   - Clone the repository:
-        ```bash
-        git clone https://github.com/remsky/Kokoro-FastAPI.git
-        cd Kokoro-FastAPI
-        
-        #   * Switch to stable branch if any issues *
-        git checkout v0.0.5post1-stable
+# Initialize service
+service = TTSService()
 
-        cd docker/gpu # OR 
-        # cd docker/cpu # Run this or the above
-        docker compose up --build 
-        ```
-        
-  __Or__ running the API alone using Docker (model + voice packs baked in) (Most Recent):
-          
-  ```bash
-  docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:v0.1.0post1 # CPU 
-  docker run --gpus all -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-gpu:v0.1.0post1 # Nvidia GPU
-  ```
+# Basic usage
+audio = await service.generate_audio(
+    text="Hello world!",
+    voice="en_female_1"
+)
+
+# Streaming for real-time output
+async for chunk in service.generate_audio_stream(
+    text="Hello world!",
+    voice="en_female_1"
+):
+    play_audio(chunk)
+
+# Combine voices
+combined = await service.combine_voices([
+    "en_female_1",
+    "en_female_2"
+])
         
         
 2. Run locally as an OpenAI-Compatible Speech Endpoint

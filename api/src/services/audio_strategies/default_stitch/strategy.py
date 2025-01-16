@@ -2,16 +2,16 @@ from typing import AsyncGenerator, Optional
 import numpy as np
 from loguru import logger
 
-from .base_strategy import AudioStrategy, PlatformType
-from ..audio import AudioNormalizer, AudioService
-from ..text_processing import chunker, normalize_text
-from ..tts_interface import TTSServiceInterface
+from ..strategy_interface import AudioStrategy, PlatformType
+from ...audio import AudioNormalizer, AudioService
+from ...text_processing import chunker, normalize_text
+from ...service_interfaces import TTSServiceProtocol
 
 
 class DefaultStitchStrategy(AudioStrategy):
     """Strategy for stitching together audio chunks from sequential processing"""
     
-    def __init__(self, tts_service: TTSServiceInterface):
+    def __init__(self, tts_service: TTSServiceProtocol):
         self.tts_service = tts_service
     
     @property

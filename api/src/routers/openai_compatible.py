@@ -10,7 +10,7 @@ from ..core.config import settings
 from ..services.audio import AudioService
 from ..services.tts_service import TTSService
 from ..structures.schemas import OpenAISpeechRequest
-from ..utils.paths import get_model_file
+from ..utils.paths import get_model_file, get_voice_file
 
 router = APIRouter(
     tags=["OpenAI Compatible TTS"],
