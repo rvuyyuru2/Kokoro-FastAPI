@@ -47,17 +47,13 @@ result = await pipeline.process("Hello world")
 ### Chunking Strategies
 - **Static**: Fixed-size chunks with basic boundary detection
 - **Dynamic**: Smart chunking using prosody and semantic analysis
-- **Future**: ML-based chunking using sentence embeddings
 
 ### Phonemization Strategies
 - **Espeak**: Current implementation using espeak-ng
 - **Future**: Language-specific phonemizers
-- **Future**: Neural etc
 
 ### Tokenization Strategies
 - **Basic**: Current vocabulary-based implementation
-- **Future**: BPE (Byte Pair Encoding)
-- **Future**: SentencePiece support
 
 ## Multi-Language Support
 
@@ -94,25 +90,6 @@ en_pipeline = TextProcessingPipeline([
     )
 ])
 ```
-
-### Language-Specific Components
-
-Each language can have specialized components:
-
-1. **Chunking Rules**:
-   - Japanese: Split on 。、
-   - English: Split on .!?
-   - Chinese: Character-based splitting
-
-2. **Phoneme Sets**:
-   - Japanese: Hiragana-based
-   - English: IPA-based
-   - Chinese: Pinyin-based
-
-3. **Tokenization**:
-   - Japanese: Character-based
-   - English: Subword-based
-   - Chinese: Character-based
 
 ## Implementation Example
 
