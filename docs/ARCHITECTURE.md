@@ -2,7 +2,7 @@
 
 ## Core Concepts
 
-Kokoro TTS uses a plugin-based architecture with three main processing stages:
+Plugin-based architecture with three main processing stages:
 
 1. Text Processing
 2. Voice Style Generation
@@ -52,7 +52,7 @@ result = await pipeline.process("Hello world")
 ### Phonemization Strategies
 - **Espeak**: Current implementation using espeak-ng
 - **Future**: Language-specific phonemizers
-- **Future**: Custom pronunciation rules engine
+- **Future**: Neural etc
 
 ### Tokenization Strategies
 - **Basic**: Current vocabulary-based implementation
@@ -188,11 +188,8 @@ To add support for a new language:
    ])
    ```
 
-## Benefits
 
-This architecture provides:
-
-1. **Flexibility**: Easy to add new languages and strategies
-2. **Maintainability**: Components are isolated and testable
-3. **Performance**: Can optimize each stage independently
-4. **Extensibility**: Plugin system for community contributions
+Easy to add new languages and strategies
+Components are isolated and testable
+Can optimize each stage independently
+Plugin system for community contributions
