@@ -23,15 +23,27 @@ class TTSStatus(str, Enum):
 
 # OpenAI-compatible schemas
 class OpenAISpeechRequest(BaseModel):
-    model: str = Field(default="kokoro", description="The model to use for generation")
-    input: str = Field(..., description="The text to generate audio for")
+    model: str = Field(
+        default="kokoro-v0_19",
+        description="ID of the model to use. Models can be queried at GET /v1/models. "
+                   "Format is typically kokoro-v{version} e.g. kokoro-v0_19",
+        examples=["kokoro-v0_19"]
+    )
+    input: str = Field(
+        ...,
+        description="The text to generate audio for",
+        examples=["Hello world", "The quick brown fox jumps over the lazy dog"]
+    )
     voice: str = Field(
         default="af",
-        description="The voice to use for generation. Can be a base voice or a combined voice name.",
+        description="The voice to use for generation. Can be a base voice or a combined voice name. "
+                   "Multiple voices can be combined using + e.g. 'voice1+voice2'",
+        examples=["af", "af_bella", "af_bella+af_john"]
     )
     response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = Field(
         default="mp3",
-        description="The format to return audio in. Supported formats: mp3, opus, flac, wav, pcm. PCM format returns raw 16-bit samples without headers. AAC is not currently supported.",
+        description="The format to return audio in. Supported formats: mp3, opus, flac, wav, pcm. "
+                   "PCM format returns raw 16-bit samples without headers. AAC is not currently supported.",
     )
     speed: float = Field(
         default=1.0,
@@ -41,5 +53,6 @@ class OpenAISpeechRequest(BaseModel):
     )
     stream: bool = Field(
         default=True,  # Default to streaming for OpenAI compatibility
-        description="If true (default), audio will be streamed as it's generated. Each chunk will be a complete sentence.",
+        description="If true (default), audio will be streamed as it's generated. "
+                   "Each chunk will be a complete sentence.",
     )

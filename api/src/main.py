@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     model = await service.model_manager.get_model()
     try:
         boundary = "░" * 2*12
-        startup_msg = f"""
+        startup_msg = f"""d
 
 {boundary}
 

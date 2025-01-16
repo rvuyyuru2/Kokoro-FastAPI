@@ -12,7 +12,7 @@ services:
     ports:
       - "8880:8880"
     environment:
-      - PYTHONPATH=/app:/app/models
+      - PYTHONPATH=/app:/app/models:/app/voices  # Add models and voices to Python path
     deploy:
       resources:
         reservations:

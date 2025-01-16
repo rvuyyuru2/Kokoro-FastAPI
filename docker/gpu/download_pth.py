@@ -22,11 +22,21 @@ def download_file(url: str, output_dir: Path) -> None:
         for chunk in response.iter_content(chunk_size=8192):
             f.write(chunk)
 
+def find_project_root() -> Path:
+    """Find project root by looking for api directory."""
+    current = Path(__file__).resolve()
+    while current.parent != current:  # Stop at root directory
+        if (current.parent / 'api').is_dir():
+            return current.parent
+        current = current.parent
+    raise RuntimeError("Could not find project root (no api directory found)")
+
 def main(custom_models: List[str] = None):
-    # Ensure models directory exists
-    project_root = Path(__file__).resolve().parents[2]  # Go up two levels from docker/cpu
+    # Find project root and ensure models directory exists
+    project_root = find_project_root()
     models_dir = project_root / 'models'
     models_dir.mkdir(exist_ok=True)
+    
     # Default PTH model if no arguments provided
     default_models = [
         "https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.1.0/kokoro-v0_19.pth"

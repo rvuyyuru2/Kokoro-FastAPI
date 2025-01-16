@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from loguru import logger
 
-from ..utils.paths import get_model_files
+from ..utils.paths import get_model_file
 
 
 class TTSBaseModel(ABC):
@@ -19,8 +19,15 @@ class TTSBaseModel(ABC):
         self._lock = asyncio.Lock()
         self._busy = False
 
-    async def setup(self, model_path: Optional[str] = None):
-        """Initialize model"""
+    async def setup(self, model_name: Optional[str] = None):
+        """Initialize model with optional specific model name
+        
+        Args:
+            model_name: Name of model to load (must be exact match)
+            
+        Raises:
+            RuntimeError: If model initialization fails
+        """
         async with self._lock:
             # Set device
             cuda_available = torch.cuda.is_available()
@@ -37,38 +44,26 @@ class TTSBaseModel(ABC):
             else:
                 self._device = "cpu"
             
-            # Initialize model
-            is_onnx = self._device == "cpu"
-            required_suffix = ".onnx" if is_onnx else ".pth"
+            # CUDA = .pth, CPU = .onnx - no exceptions
+            suffix = ".pth" if self._device == "cuda" else ".onnx"
             
-            if model_path is not None:
-                # When specific model requested, validate exact match with correct extension
-                requested_path = Path(model_path)
-                model_files = await get_model_files(required_suffix)
-                matching_model = next((f for f in model_files if f.stem == requested_path.stem), None)
-                
-                if not matching_model:
-                    available_models = ", ".join(f.stem for f in model_files)
-                    error_msg = f"Model '{requested_path.stem}' not found with {required_suffix} extension. Available models: {available_models}"
-                    logger.error(error_msg)
-                    raise ValueError(error_msg)
+            try:
+                # Get exact model file if name provided, otherwise first valid model
+                if model_name:
+                    model_path = await get_model_file(f"{model_name}{suffix}")
+                else:
+                    model_path = await get_model_file(f"*{suffix}")
                     
-                model_path = str(matching_model)
-            else:
-                # Default model selection only if no model specified
-                model_files = await get_model_files(required_suffix)
-                if not model_files:
-                    logger.error(f"Could not find any {required_suffix} models in search paths")
-                    raise RuntimeError(f"Could not find any {required_suffix} models in search paths")
-                model_path = str(model_files[0])
-
-            logger.info(f"Initializing model on {self._device} using: {model_path}")
-            model_dir = str(Path(model_path).parent)
-            self._model = self.initialize(model_dir, model_path=model_path)
-            if self._model is None:
-                raise RuntimeError(f"Failed to initialize {self._device.upper()} model")
-            
-            logger.info("Model initialization complete")
+                logger.info(f"Initializing model on {self._device} using: {model_path}")
+                model_dir = str(model_path.parent)
+                self._model = self.initialize(model_dir, model_path=str(model_path))
+                if self._model is None:
+                    raise RuntimeError(f"Failed to initialize {self._device.upper()} model")
+                
+                logger.info("Model initialization complete")
+                
+            except Exception as e:
+                raise RuntimeError(f"Model initialization failed: {str(e)}")
 
     @abstractmethod
     def initialize(self, model_dir: str, model_path: str = None):

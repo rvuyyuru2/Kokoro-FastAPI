@@ -4,7 +4,7 @@ from typing import List, Tuple
 import torch
 from loguru import logger
 
-from ..utils.paths import get_voice_files
+from ..utils.paths import get_voice_file
 
 
 async def warmup_model(warmup_text: str) -> int:
@@ -13,11 +13,23 @@ async def warmup_model(warmup_text: str) -> int:
     from .tts_service import TTSService
     service = TTSService()
 
-    # Get all voices sorted by filename length (shorter names first, usually base voices)
-    voice_files = sorted(
-        await get_voice_files(), 
-        key=lambda p: len(p.name)
-    )
+    try:
+        # Get all voice names
+        voice_names = await get_voice_file()  # No name = list all voices
+        
+        # Get paths for each voice, sorted by name length
+        voice_files = []
+        for name in voice_names:
+            try:
+                voice_files.append(await get_voice_file(name))
+            except RuntimeError:
+                logger.warning(f"Failed to get voice file for {name}")
+                continue
+                
+        voice_files.sort(key=lambda p: len(p.name))
+    except RuntimeError as e:
+        logger.error(f"Failed to list voices: {e}")
+        return 0
 
     # Load first voice for warmup
     n_voices_cache = 1

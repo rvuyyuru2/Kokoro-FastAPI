@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import AsyncGenerator, List, Union
 import aiofiles.os
 
@@ -9,6 +10,7 @@ from ..core.config import settings
 from ..services.audio import AudioService
 from ..services.tts_service import TTSService
 from ..structures.schemas import OpenAISpeechRequest
+from ..utils.paths import get_model_file
 
 router = APIRouter(
     tags=["OpenAI Compatible TTS"],
@@ -18,7 +20,7 @@ router = APIRouter(
 
 def get_tts_service() -> TTSService:
     """Dependency to get TTSService instance with database session"""
-    return TTSService()  # Initialize TTSService with default settings
+    return TTSService()
 
 
 async def process_voices(
@@ -56,9 +58,11 @@ async def stream_audio_chunks(
     client_request: Request
 ) -> AsyncGenerator[bytes, None]:
     """Stream audio chunks as they're generated with client disconnect handling"""
-    voice_to_use = await process_voices(request.voice, tts_service)
-    
     try:
+        # Validate model and voice before starting stream
+        await tts_service._validate_model(request.model)
+        voice_to_use = await process_voices(request.voice, tts_service)
+        
         async for chunk in tts_service.generate_audio_stream(
             text=request.input,
             voice=voice_to_use,
@@ -71,10 +75,43 @@ async def stream_audio_chunks(
                 logger.info("Client disconnected, stopping audio generation")
                 break
             yield chunk
+            
+    except RuntimeError as e:
+        if "Model" in str(e):
+            logger.error(f"Model error in audio streaming: {str(e)}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": {
+                        "code": "model_not_found",
+                        "message": str(e),
+                        "param": "model",
+                        "type": "invalid_request_error"
+                    }
+                }
+            )
+        raise  # Re-raise other RuntimeErrors
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "invalid_request_error"
+                }
+            }
+        )
     except Exception as e:
         logger.error(f"Error in audio streaming: {str(e)}")
-        # Let the exception propagate to trigger cleanup
-        raise
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "server_error"
+                }
+            }
+        )
 
 
 @router.post("/audio/speech")
@@ -86,7 +123,8 @@ async def create_speech(
 ):
     """OpenAI-compatible endpoint for text-to-speech"""
     try:
-        # Process voice combination and validate
+        # Validate model and voice before starting generation
+        await tts_service._validate_model(request.model)
         voice_to_use = await process_voices(request.voice, tts_service)
 
         # Set content type based on format
@@ -114,21 +152,16 @@ async def create_speech(
             )
         else:
             # Generate complete audio with specified model
-            audio, proc_time = await tts_service._generate_audio(
+            audio_bytes = await tts_service.generate_audio(
                 text=request.input,
                 voice=voice_to_use,
                 speed=request.speed,
+                output_format=request.response_format,
                 model=request.model,
-                stitch_long_output=True,
-            )
-
-            # Convert to requested format
-            content = AudioService.convert_audio(
-                audio, 24000, request.response_format, is_first_chunk=True, stream=False
             )
 
             return Response(
-                content=content,
+                content=audio_bytes,
                 media_type=content_type,
                 headers={
                     "Content-Disposition": f"attachment; filename=speech.{request.response_format}",
@@ -136,15 +169,44 @@ async def create_speech(
                 },
             )
 
+    except RuntimeError as e:
+        if "Model" in str(e):
+            # Model-specific errors
+            logger.error(f"Model error: {str(e)}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": {
+                        "code": "model_not_found",
+                        "message": str(e),
+                        "param": "model",
+                        "type": "invalid_request_error"
+                    }
+                }
+            )
+        raise  # Re-raise other RuntimeErrors
     except ValueError as e:
+        # Other validation errors
         logger.error(f"Invalid request: {str(e)}")
         raise HTTPException(
-            status_code=400, detail={"error": "Invalid request", "message": str(e)}
+            status_code=400,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "invalid_request_error"
+                }
+            }
         )
     except Exception as e:
         logger.error(f"Error generating speech: {str(e)}")
         raise HTTPException(
-            status_code=500, detail={"error": "Server error", "message": str(e)}
+            status_code=500,
+            detail={
+                "error": {
+                    "message": "Internal server error",
+                    "type": "server_error"
+                }
+            }
         )
 
 
@@ -156,7 +218,15 @@ async def list_voices(tts_service: TTSService = Depends(get_tts_service)):
         return {"voices": voices}
     except Exception as e:
         logger.error(f"Error listing voices: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "server_error"
+                }
+            }
+        )
 
 
 @router.post("/audio/voices/combine")
@@ -185,13 +255,25 @@ async def combine_voices(
     except ValueError as e:
         logger.error(f"Invalid voice combination request: {str(e)}")
         raise HTTPException(
-            status_code=400, detail={"error": "Invalid request", "message": str(e)}
+            status_code=400,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "invalid_request_error"
+                }
+            }
         )
 
     except Exception as e:
         logger.error(f"Server error during voice combination: {str(e)}")
         raise HTTPException(
-            status_code=500, detail={"error": "Server error", "message": "Server error"}
+            status_code=500,
+            detail={
+                "error": {
+                    "message": "Internal server error",
+                    "type": "server_error"
+                }
+            }
         )
 
 
@@ -200,22 +282,40 @@ async def list_models():
     """List all available models in OpenAI format"""
     try:
         models = []
-        entries = await aiofiles.os.scandir(settings.model_dir)
-        
-        for entry in entries:
-            if entry.is_file() and entry.name.endswith(('.onnx', '.pth')):
-                stat = await aiofiles.os.stat(entry.path)
-                models.append({
-                    "id": entry.name.rsplit('.', 1)[0],
-                    "object": "model",
-                    "created": int(stat.st_ctime),
-                    "owned_by": entry.name.split('.')[-1]  # onnx or pth
-                })
+        # Scan both model directories
+        for path in [Path(settings.model_dir), Path("/app/defaults")]:
+            if not path.exists():
+                continue
                 
+            iterfiles = await aiofiles.os.scandir(path)
+            for entry in iterfiles:
+                if not entry.is_file():
+                    continue
+                    
+                if entry.name.endswith('.onnx') or entry.name.endswith('.pth'):
+                    model_path = Path(entry.path)
+                    stat = await aiofiles.os.stat(model_path)
+                    model_type = 'onnx' if model_path.suffix == '.onnx' else 'pth'
+                    
+                    models.append({
+                        "id": model_path.stem,  # Keep full name including version
+                        "object": "model",
+                        "created": int(stat.st_ctime),
+                        "owned_by": model_type
+                    })
+                    
         return {
             "object": "list",
-            "data": models
+            "data": sorted(models, key=lambda x: x["id"])
         }
     except Exception as e:
         logger.error(f"Error listing models: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "server_error"
+                }
+            }
+        )

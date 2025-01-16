@@ -15,7 +15,6 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Create non-root user and directories
 RUN useradd -m -u 1000 appuser && \
     mkdir -p /app/models \
-            /app/defaults \
             /app/voices && \
     chown -R appuser:appuser /app
 

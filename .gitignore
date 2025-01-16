@@ -37,7 +37,6 @@ ENV/
 
 *.pth
 *.tar*
-*.onnx
 
 # Audio files
 examples/*.wav
@@ -52,7 +51,6 @@ examples/phoneme_examples/output/example_2.wav
 examples/phoneme_examples/output/example_3.wav
 
 # Other project files
-Kokoro-82M/
 ui/data/
 EXTERNAL_UV_DOCUMENTATION*
 

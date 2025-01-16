@@ -3,7 +3,7 @@ import os
 import re
 import time
 from functools import lru_cache
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, AsyncGenerator, Union
 from pathlib import Path
 
 import aiofiles.os
@@ -13,14 +13,16 @@ import torch
 from loguru import logger
 
 from ..core.config import settings
-from ..utils.paths import get_voice_files
+from ..utils.paths import get_model_file, get_voice_file
 from .audio import AudioNormalizer, AudioService
 from .text_processing import chunker, normalize_text
 from .tts_model import TTSModel
 from .model_manager import ModelManager
+from .tts_interface import TTSServiceInterface
+from .audio_strategies.strategy_factory import AudioStrategyFactory
 
 
-class TTSService:
+class TTSService(TTSServiceInterface):
     """Text-to-Speech service with concurrent model management"""
     
     # Singleton instance management
@@ -31,7 +33,12 @@ class TTSService:
         self.output_dir = output_dir
         if TTSService._model_manager is None:
             TTSService._model_manager = ModelManager(TTSModel)
-        self.model_manager = TTSService._model_manager
+        self._model_manager = TTSService._model_manager
+        self.strategy_factory = AudioStrategyFactory(self)
+
+    @property
+    def model_manager(self) -> ModelManager:
+        return self._model_manager
 
     @classmethod
     async def shutdown_service(cls):
@@ -61,98 +68,57 @@ class TTSService:
 
     async def _find_voice(self, voice_name: str) -> Optional[Path]:
         """Find a voice file by name"""
-        voice_files = await get_voice_files()
-        for voice_file in voice_files:
-            if voice_file.stem == voice_name:
-                return voice_file
-        return None
-
-    async def _generate_audio(
-        self, text: str, voice: str, speed: float, model: str = None, stitch_long_output: bool = True
-    ) -> Tuple[torch.Tensor, float]:
-        """Generate complete audio and return with processing time"""
-        start_time = time.time()
-
         try:
-            # Normalize text once at the start
-            if not text:
-                raise ValueError("Text is empty after preprocessing")
-            normalized = normalize_text(text)
-            if not normalized:
-                raise ValueError("Text is empty after preprocessing")
-            text = str(normalized)
+            return await get_voice_file(voice_name)
+        except RuntimeError:
+            return None
 
-            # Find and load voice
-            voice_path = await self._find_voice(voice)
-            if not voice_path:
-                raise ValueError(f"Voice not found: {voice}")
-            voicepack = await self._load_voice(str(voice_path), model)
+    async def _validate_model(self, model_name: str) -> None:
+        """Validate model exists before starting audio generation
+        
+        Args:
+            model_name: Name of model to validate
+            
+        Raises:
+            RuntimeError: If model file not found
+        """
+        # Try exact model file
+        try:
+            await get_model_file(f"{model_name}.pth")
+            return
+        except RuntimeError:
+            pass
+            
+        try:
+            await get_model_file(f"{model_name}.onnx")
+            return
+        except RuntimeError:
+            pass
+            
+        raise RuntimeError(f"Model not found: {model_name}")
 
-            # For non-streaming, preprocess all chunks first
-            if stitch_long_output:
-                # Preprocess all chunks to phonemes/tokens
-                chunks_data = []
-                for chunk in chunker.split_text(text):
-                    try:
-                        language = self._get_language_from_voice(voice)
-                        model = await self.model_manager.get_model(model)
-                        try:
-                            phonemes, tokens = model.process_text(chunk, language)
-                            chunks_data.append((chunk, tokens))
-                        finally:
-                            self.model_manager.release_model(model)
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to process chunk: '{chunk}'. Error: {str(e)}"
-                        )
-                        continue
-
-                if not chunks_data:
-                    raise ValueError("No chunks were processed successfully")
-
-                # Generate audio for all chunks
-                audio_chunks = []
-                for chunk, tokens in chunks_data:
-                    try:
-                        model = await self.model_manager.get_model(model)
-                        try:
-                            chunk_audio = model.generate_from_tokens(
-                                tokens, voicepack, speed
-                            )
-                        finally:
-                            self.model_manager.release_model(model)
-                        if chunk_audio is not None:
-                            audio_chunks.append(chunk_audio)
-                        else:
-                            logger.error(f"No audio generated for chunk: '{chunk}'")
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to generate audio for chunk: '{chunk}'. Error: {str(e)}"
-                        )
-                        continue
-
-                if not audio_chunks:
-                    raise ValueError("No audio chunks were generated successfully")
-
-                # Concatenate all chunks
-                audio = (
-                    np.concatenate(audio_chunks)
-                    if len(audio_chunks) > 1
-                    else audio_chunks[0]
-                )
-            else:
-                # Process single chunk
-                language = self._get_language_from_voice(voice)
-                model = await self.model_manager.get_model()
-                try:
-                    phonemes, tokens = model.process_text(text, language)
-                    audio = model.generate_from_tokens(tokens, voicepack, speed)
-                finally:
-                    self.model_manager.release_model(model)
-
-            processing_time = time.time() - start_time
-            return audio, processing_time
-
+    async def generate_audio(
+        self,
+        text: str,
+        voice: str,
+        speed: float = 1.0,
+        output_format: str = "wav",
+        model: str = None,
+    ) -> bytes:
+        """Generate complete audio using the default stitch strategy"""
+        if model:
+            await self._validate_model(model)
+            
+        try:
+            strategy = self.strategy_factory.get_strategy("default_stitch")
+            async for audio_bytes in strategy.process_audio(
+                text=text,
+                voice=voice,
+                speed=speed,
+                output_format=output_format,
+                model=model
+            ):
+                return audio_bytes  # Return the complete audio output
         except Exception as e:
             logger.error(f"Error in audio generation: {str(e)}")
             raise
@@ -165,96 +131,25 @@ class TTSService:
         output_format: str = "wav",
         silent=False,
         model: str = None,
-    ):
-        """Generate and yield audio chunks as they're generated for real-time streaming"""
+        strategy: str = "streaming"
+    ) -> AsyncGenerator[bytes, None]:
+        """Generate audio using the specified strategy"""
+        if model:
+            await self._validate_model(model)
+            
         try:
-            stream_start = time.time()
-            # Create normalizer for consistent audio levels
-            stream_normalizer = AudioNormalizer()
-
-            # Input validation and preprocessing
-            if not text:
-                raise ValueError("Text is empty")
-            preprocess_start = time.time()
-            normalized = normalize_text(text)
-            if not normalized:
-                raise ValueError("Text is empty after preprocessing")
-            text = str(normalized)
-            logger.debug(
-                f"Text preprocessing took: {(time.time() - preprocess_start)*1000:.1f}ms"
-            )
-
-            # Voice validation and loading
-            voice_start = time.time()
-            voice_path = await self._find_voice(voice)
-            if not voice_path:
-                raise ValueError(f"Voice not found: {voice}")
-            voicepack = await self._load_voice(str(voice_path), model)
-            logger.debug(
-                f"Voice loading took: {(time.time() - voice_start)*1000:.1f}ms"
-            )
-
-            # Process chunks as they're generated
-            is_first = True
-            chunks_processed = 0
-
-            # Process chunks as they come from generator
-            chunk_gen = chunker.split_text(text)
-            current_chunk = next(chunk_gen, None)
-
-            while current_chunk is not None:
-                next_chunk = next(chunk_gen, None)  # Peek at next chunk
-                chunks_processed += 1
-                try:
-                    # Process text and generate audio
-                    language = self._get_language_from_voice(voice)
-                    model = await self.model_manager.get_model(model)
-                    try:
-                        phonemes, tokens = model.process_text(current_chunk, language)
-                        chunk_audio = model.generate_from_tokens(
-                            tokens, voicepack, speed
-                        )
-                    finally:
-                        self.model_manager.release_model(model)
-
-                    if chunk_audio is not None:
-                        # Convert chunk with proper streaming header handling
-                        chunk_bytes = AudioService.convert_audio(
-                            chunk_audio,
-                            24000,
-                            output_format,
-                            is_first_chunk=is_first,
-                            normalizer=stream_normalizer,
-                            is_last_chunk=(next_chunk is None),  # Last if no next chunk
-                            stream=True  # Ensure proper streaming format handling
-                        )
-
-                        yield chunk_bytes
-                        is_first = False
-                    else:
-                        logger.error(f"No audio generated for chunk: '{current_chunk}'")
-
-                except Exception as e:
-                    logger.error(
-                        f"Failed to generate audio for chunk: '{current_chunk}'. Error: {str(e)}"
-                    )
-
-                current_chunk = next_chunk  # Move to next chunk
-
+            audio_strategy = self.strategy_factory.get_strategy(strategy)
+            async for chunk in audio_strategy.process_audio(
+                text=text,
+                voice=voice,
+                speed=speed,
+                output_format=output_format,
+                model=model
+            ):
+                yield chunk
         except Exception as e:
-            logger.error(f"Error in audio generation stream: {str(e)}")
+            logger.error(f"Error in audio generation: {str(e)}")
             raise
-
-    def _save_audio(self, audio: torch.Tensor, filepath: str):
-        """Save audio to file"""
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        wavfile.write(filepath, 24000, audio)
-
-    def _audio_to_bytes(self, audio: torch.Tensor) -> bytes:
-        """Convert audio tensor to WAV bytes"""
-        buffer = io.BytesIO()
-        wavfile.write(buffer, 24000, audio)
-        return buffer.getvalue()
 
     async def combine_voices(self, voices: List[str]) -> str:
         """Combine multiple voices into a new voice"""
@@ -287,14 +182,9 @@ class TTSService:
             f: str = "_".join(v_name)
             v = torch.mean(torch.stack(t_voices), dim=0)
             
-            # Save to first available voice directory
-            voice_files = await get_voice_files()
-            if not voice_files:
-                raise RuntimeError("No voice directories available")
-            combined_path = str(voice_files[0].parent / f"{f}.pt")
-
             # Save combined voice
             try:
+                combined_path = str(Path(settings.voices_dir) / f"{f}.pt")
                 torch.save(v, combined_path)
             except Exception as e:
                 raise RuntimeError(
@@ -311,8 +201,7 @@ class TTSService:
     async def list_voices(self) -> List[str]:
         """List all available voices"""
         try:
-            voice_files = await get_voice_files()
-            return sorted(voice_file.stem for voice_file in voice_files)
-        except Exception as e:
+            return await get_voice_file()  # No name = list all
+        except RuntimeError as e:
             logger.error(f"Error listing voices: {str(e)}")
             return []

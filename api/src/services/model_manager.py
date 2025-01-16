@@ -117,7 +117,7 @@ class ModelManager:
                         await model.acquire()
                         return model
             
-            # Short sleep to prevent tight loop
+            # Short sleep to prevent tight loop, TODO: Use condition variable?
             await asyncio.sleep(0.1)
 
     async def _cleanup_instance(self, model: TTSBaseModel):
