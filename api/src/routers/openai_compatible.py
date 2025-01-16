@@ -37,7 +37,7 @@ async def process_voices(
         raise ValueError("No voices provided")
 
     # Check if all voices exist
-    available_voices = await tts_service.list_voices()
+    available_voices = await get_voice_file()  # Returns list of voice names
     for voice in voices:
         if voice not in available_voices:
             raise ValueError(
@@ -124,6 +124,10 @@ async def create_speech(
     """OpenAI-compatible endpoint for text-to-speech"""
     try:
         # Validate model and voice before starting generation
+        if request.model == "kokoro":
+            # legacy v < 0.1.0
+            request.model = settings.default_model
+
         await tts_service._validate_model(request.model)
         voice_to_use = await process_voices(request.voice, tts_service)
 
@@ -211,10 +215,10 @@ async def create_speech(
 
 
 @router.get("/audio/voices")
-async def list_voices(tts_service: TTSService = Depends(get_tts_service)):
+async def list_voices():
     """List all available voices for text-to-speech"""
     try:
-        voices = await tts_service.list_voices()
+        voices = await get_voice_file()  # Returns list of voice names
         return {"voices": voices}
     except Exception as e:
         logger.error(f"Error listing voices: {str(e)}")
@@ -249,7 +253,7 @@ async def combine_voices(
     """
     try:
         combined_voice = await process_voices(request, tts_service)
-        voices = await tts_service.list_voices()
+        voices = await get_voice_file()  # Returns list of voice names
         return {"voices": voices, "voice": combined_voice}
 
     except ValueError as e:
@@ -283,7 +287,7 @@ async def list_models():
     try:
         models = []
         # Scan both model directories
-        for path in [Path(settings.model_dir), Path("/app/defaults")]:
+        for path in [Path(settings.model_dir)]:
             if not path.exists():
                 continue
                 

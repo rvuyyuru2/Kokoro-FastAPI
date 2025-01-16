@@ -34,7 +34,6 @@ async def get_model_file(pattern: Optional[str] = None) -> Path:
     """
     if not MODEL_DIR.exists():
         raise RuntimeError("Model directory not found")
-        
     if pattern:
         if '*' in pattern:
             # Pattern matching (e.g. "*.pth")

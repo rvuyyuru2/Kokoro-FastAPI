@@ -12,13 +12,14 @@ class Settings(BaseSettings):
     # TTS Settings
     output_dir: str = "output"
     output_dir_size_limit_mb: float = 500.0  # Maximum size of output directory in MB
-    default_voice: str = "af"
     model_dir: str = "models"  # Base directory for model files, relative to project root
+    voices_dir: str = "voices"  # Relative to project root
 
     pytorch_model_path: str = "kokoro-v0_19.pth"
     onnx_model_path: str = "kokoro-v0_19.onnx"
+    default_model: str = "kokoro-v0_19"
+    default_voice: str = "af"
 
-    voices_dir: str = "voices"  # Relative to project root
     sample_rate: int = 24000
     max_chunk_size: int = 300  # Maximum size of text chunks for processing
     gap_trim_ms: int = 250  # Amount to trim from streaming chunk ends in milliseconds
