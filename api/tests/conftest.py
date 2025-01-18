@@ -1,126 +1,164 @@
-import os
-import shutil
-import sys
-from unittest.mock import MagicMock, Mock, patch
+"""Test configuration and fixtures."""
 
-import aiofiles.threadpool
+import os
+from typing import AsyncIterator, Iterator
+
 import numpy as np
 import pytest
+import torch
 
-
-def cleanup_mock_dirs():
-    """Clean up any MagicMock directories created during tests"""
-    mock_dir = "MagicMock"
-    if os.path.exists(mock_dir):
-        shutil.rmtree(mock_dir)
-
-
-@pytest.fixture(autouse=True)
-def setup_aiofiles():
-    """Setup aiofiles mock wrapper"""
-    aiofiles.threadpool.wrap.register(MagicMock)(
-        lambda *args, **kwargs: aiofiles.threadpool.AsyncBufferedIOBase(*args, **kwargs)
-    )
-    yield
-
-
-@pytest.fixture(autouse=True)
-def cleanup():
-    """Automatically clean up before and after each test"""
-    cleanup_mock_dirs()
-    yield
-    cleanup_mock_dirs()
-
-
-# Mock modules before they're imported
-sys.modules["transformers"] = Mock()
-sys.modules["phonemizer"] = Mock()
-sys.modules["models"] = Mock()
-sys.modules["models.build_model"] = Mock()
-sys.modules["kokoro"] = Mock()
-sys.modules["kokoro.generate"] = Mock()
-sys.modules["kokoro.phonemize"] = Mock()
-sys.modules["kokoro.tokenize"] = Mock()
-
-# Mock ONNX runtime
-mock_onnx = Mock()
-mock_onnx.InferenceSession = Mock()
-mock_onnx.SessionOptions = Mock()
-mock_onnx.GraphOptimizationLevel = Mock()
-mock_onnx.ExecutionMode = Mock()
-sys.modules["onnxruntime"] = mock_onnx
-
-# Create mock settings module
-mock_settings_module = Mock()
-mock_settings = Mock()
-mock_settings.model_dir = "/mock/model/dir"
-mock_settings.onnx_model_path = "mock.onnx"
-mock_settings_module.settings = mock_settings
-sys.modules["api.src.core.config"] = mock_settings_module
-
-
-class MockTTSModel:
-    _instance = None
-    _onnx_session = None
-    VOICES_DIR = "/mock/voices/dir"
-
-    def __init__(self):
-        self._initialized = False
-
-    @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    @classmethod
-    def initialize(cls, model_dir):
-        cls._onnx_session = Mock()
-        cls._onnx_session.run = Mock(return_value=[np.zeros(48000)])
-        cls._instance._initialized = True
-        return cls._onnx_session
-
-    @classmethod
-    def setup(cls):
-        if not cls._instance._initialized:
-            cls.initialize("/mock/model/dir")
-        return cls._instance
-
-    @classmethod
-    def generate_from_tokens(cls, tokens, voicepack, speed):
-        if not cls._instance._initialized:
-            raise RuntimeError("Model not initialized. Call setup() first.")
-        return np.zeros(48000)
-
-    @classmethod
-    def process_text(cls, text, language):
-        return "mock phonemes", [1, 2, 3]
-
-    @staticmethod
-    def get_device():
-        return "cpu"
+from ..audio_processing import (
+    AudioConfig,
+    AudioProcessor,
+    FormatConfig,
+    NormConfig,
+    PadConfig,
+    EffectConfig
+)
+from ..inference import (
+    ModelConfig,
+    ModelManager,
+    ONNXConfig,
+    GPUConfig
+)
+from ..services import ServiceConfig, TTSService
+from ..text_processing import process_text
 
 
 @pytest.fixture
-def mock_tts_service(monkeypatch):
-    """Mock TTSService for testing"""
-    mock_service = Mock()
-    mock_service._get_voice_path.return_value = "/mock/path/voice.pt"
-    mock_service._load_voice.return_value = np.zeros((1, 192))
-
-    # Mock TTSModel.generate_from_tokens since we call it directly
-    mock_generate = Mock(return_value=np.zeros(48000))
-    monkeypatch.setattr(
-        "api.src.routers.development.TTSModel.generate_from_tokens", mock_generate
-    )
-
-    return mock_service
+def sample_text() -> str:
+    """Sample text for testing."""
+    return "Hello, world! This is a test."
 
 
 @pytest.fixture
-def mock_audio_service(monkeypatch):
-    """Mock AudioService"""
-    mock_service = Mock()
-    mock_service.convert_audio.return_value = b"mock audio data"
-    monkeypatch.setattr("api.src.routers.development.AudioService", mock_service)
-    return mock_service
+def sample_tokens() -> list[int]:
+    """Sample token sequence for testing."""
+    return [1, 2, 3, 4, 5]
+
+
+@pytest.fixture
+def sample_audio() -> np.ndarray:
+    """Sample audio data for testing."""
+    return np.random.randn(24000)  # 1 second at 24kHz
+
+
+@pytest.fixture
+def sample_voice() -> torch.Tensor:
+    """Sample voice embedding for testing."""
+    return torch.randn(256)  # Example embedding size
+
+
+@pytest.fixture
+def audio_config() -> AudioConfig:
+    """Audio processing configuration."""
+    return AudioConfig(
+        format=FormatConfig(
+            mp3_compression=0.0,
+            opus_compression=0.0
+        ),
+        norm=NormConfig(
+            target_db=-20.0,
+            chunk_trim_ms=50
+        ),
+        pad=PadConfig(
+            min_silence_ms=100.0,
+            noise_level=0.001
+        ),
+        effect=EffectConfig(
+            fade_samples=128,
+            threshold_db=-20.0
+        )
+    )
+
+
+@pytest.fixture
+def model_config() -> ModelConfig:
+    """Model configuration."""
+    return ModelConfig(
+        prefer_gpu=False,  # Use CPU for testing
+        cache_models=True,
+        cache_voices=True,
+        voice_cache_size=10,
+        onnx=ONNXConfig(
+            optimization_level="basic",
+            num_threads=1
+        ),
+        gpu=GPUConfig(
+            memory_threshold=2.0,
+            retry_on_oom=True
+        )
+    )
+
+
+@pytest.fixture
+def service_config(
+    audio_config: AudioConfig,
+    model_config: ModelConfig
+) -> ServiceConfig:
+    """Service configuration."""
+    return ServiceConfig(
+        model=model_config,
+        audio=audio_config,
+        voices_dir="test_voices",
+        output_dir="test_output"
+    )
+
+
+@pytest.fixture
+def audio_processor(audio_config: AudioConfig) -> AudioProcessor:
+    """Audio processor instance."""
+    return AudioProcessor(audio_config)
+
+
+@pytest.fixture
+def model_manager(model_config: ModelConfig) -> ModelManager:
+    """Model manager instance."""
+    return ModelManager(model_config)
+
+
+@pytest.fixture
+def tts_service(service_config: ServiceConfig) -> TTSService:
+    """TTS service instance."""
+    return TTSService(service_config)
+
+
+@pytest.fixture
+def text_processor() -> Iterator[str]:
+    """Process sample text into chunks."""
+    text = "This is a test sentence. And another one."
+    yield from process_text(text)
+
+
+@pytest.fixture
+async def streaming_chunks(
+    tts_service: TTSService,
+    sample_text: str
+) -> AsyncIterator[bytes]:
+    """Generate streaming audio chunks."""
+    async for chunk in tts_service.generate_stream(
+        sample_text,
+        "test_voice",
+        speed=1.0,
+        output_format="wav"
+    ):
+        yield chunk
+
+
+@pytest.fixture(scope="session")
+def test_dir(tmp_path_factory) -> str:
+    """Create and clean up test directory."""
+    test_dir = tmp_path_factory.mktemp("tts_test")
+    os.makedirs(os.path.join(test_dir, "voices"), exist_ok=True)
+    os.makedirs(os.path.join(test_dir, "output"), exist_ok=True)
+    return str(test_dir)
+
+
+@pytest.fixture(autouse=True)
+def cleanup_test_files(test_dir: str) -> None:
+    """Clean up test files after each test."""
+    yield
+    for root, _, files in os.walk(test_dir):
+        for file in files:
+            if file.endswith((".wav", ".mp3", ".opus", ".flac", ".pt")):
+                os.remove(os.path.join(root, file))

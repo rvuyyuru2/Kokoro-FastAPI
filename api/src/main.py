@@ -1,111 +1,85 @@
-"""
-FastAPI OpenAI Compatible API
-"""
+"""Main FastAPI application."""
 
-import sys
-from contextlib import asynccontextmanager
-
-import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from .core.config import settings
-from .routers.development import router as dev_router
-from .routers.openai_compatible import router as openai_router
-from .services.tts_model import TTSModel
-from .services.tts_service import TTSService
+from .routers import openai_compatible, tts
+from .services import get_service
 
-
-def setup_logger():
-    """Configure loguru logger with custom formatting"""
-    config = {
-        "handlers": [
-            {
-                "sink": sys.stdout,
-                "format": "<fg #2E8B57>{time:hh:mm:ss A}</fg #2E8B57> | "
-                "{level: <8} | "
-                "{message}",
-                "colorize": True,
-                "level": "INFO",
-            },
-        ],
-    }
-    logger.remove()
-    logger.configure(**config)
-    logger.level("ERROR", color="<red>")
-
-
-# Configure logger
-setup_logger()
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan context manager for model initialization"""
-    logger.info("Loading TTS model and voice packs...")
-
-    # Initialize the main model with warm-up
-    voicepack_count = await TTSModel.setup()
-    # boundary = "█████╗"*9
-    boundary = "░" * 2*12
-    startup_msg = f"""
-
-{boundary}
-
-    ╔═╗┌─┐┌─┐┌┬┐
-    ╠╣ ├─┤└─┐ │ 
-    ╚  ┴ ┴└─┘ ┴ 
-    ╦╔═┌─┐┬┌─┌─┐
-    ╠╩╗│ │├┴┐│ │
-    ╩ ╩└─┘┴ ┴└─┘
-
-{boundary}
-                """
-    # TODO: Improve CPU warmup, threads, memory, etc
-    startup_msg += f"\nModel warmed up on {TTSModel.get_device()}"
-    startup_msg += f"\n{voicepack_count} voice packs loaded\n"
-    startup_msg += f"\n{boundary}\n"
-    logger.info(startup_msg)
-
-    yield
-
-
-# Initialize FastAPI app
+# Create FastAPI app
 app = FastAPI(
     title=settings.api_title,
     description=settings.api_description,
-    version=settings.api_version,
-    lifespan=lifespan,
-    openapi_url="/openapi.json",  # Explicitly enable OpenAPI schema
+    version=settings.api_version
 )
 
-# Add CORS middleware
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Include routers
-app.include_router(openai_router, prefix="/v1")
-app.include_router(dev_router)  # New development endpoints
-# app.include_router(text_router)  # Deprecated but still live for backwards compatibility
+app.include_router(tts.router)
+app.include_router(openai_compatible.router)
 
 
-# Health check endpoint
+@app.on_event("startup")
+async def startup():
+    """Initialize on startup."""
+    logger.info("Initializing TTS service")
+    
+    # Initialize service
+    service = get_service()
+    
+    # Log configuration
+    logger.info(f"Using model backend: {service._model_manager.current_backend}")
+    logger.info(f"Available voices: {len(await service.list_voices())}")
+    logger.info("TTS service initialized")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Cleanup on shutdown."""
+    logger.info("Shutting down TTS service")
+    
+    # Get service instance
+    service = get_service()
+    
+    # Clean up resources
+    service._model_manager.unload_all()
+    logger.info("Resources cleaned up")
+
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+    """Health check endpoint.
+    
+    Returns:
+        Health status
+    """
+    return {
+        "status": "healthy",
+        "version": app.version
+    }
 
 
-@app.get("/v1/test")
-async def test_endpoint():
-    """Test endpoint to verify routing"""
-    return {"status": "ok"}
-
-
-if __name__ == "__main__":
-    uvicorn.run("api.src.main:app", host=settings.host, port=settings.port, reload=True)
+@app.get("/")
+async def root():
+    """Root endpoint.
+    
+    Returns:
+        API information
+    """
+    return {
+        "name": app.title,
+        "description": app.description,
+        "version": app.version,
+        "docs_url": "/docs",
+        "redoc_url": "/redoc"
+    }

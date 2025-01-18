@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     api_version: str = "1.0.0"
     host: str = "0.0.0.0"
     port: int = 8880
+    cors_origins: list[str] = ["*"]
+
+    # Backend Settings
+    use_gpu: bool = False  # Whether to use GPU backend
+    use_onnx: bool = True  # Whether to use ONNX (True) or PyTorch (False)
 
     # TTS Settings
     output_dir: str = "output"

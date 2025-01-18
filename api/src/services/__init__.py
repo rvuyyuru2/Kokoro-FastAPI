@@ -1,3 +1,5 @@
-from .tts_service import TTSService
+"""Service layer for TTS API."""
 
-__all__ = ["TTSService"]
+from .tts import TTSService, get_service
+
+__all__ = ["TTSService", "get_service"]
