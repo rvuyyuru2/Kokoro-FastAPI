@@ -1,6 +1,5 @@
 """CPU-based ONNX inference backend."""
 
-import os
 from typing import Dict, Optional
 
 import numpy as np
@@ -13,12 +12,13 @@ from onnxruntime import (
     SessionOptions
 )
 
+from ..core import paths
 from ..core.config import settings
 from ..structures.model_schemas import ONNXConfig
 from .base import BaseModelBackend
 
 
-class CPUBackend(BaseModelBackend):
+class ONNXCPUBackend(BaseModelBackend):
     """ONNX-based CPU inference backend."""
 
     def __init__(self):
@@ -35,7 +35,7 @@ class CPUBackend(BaseModelBackend):
             arena_extend_strategy=settings.onnx_arena_extend_strategy
         )
 
-    def load_model(self, path: str) -> None:
+    async def load_model(self, path: str) -> None:
         """Load ONNX model.
         
         Args:
@@ -45,10 +45,10 @@ class CPUBackend(BaseModelBackend):
             RuntimeError: If model loading fails
         """
         try:
-            if not os.path.exists(path):
-                raise RuntimeError(f"Model not found: {path}")
-
-            logger.info(f"Loading ONNX model: {path}")
+            # Get verified model path
+            model_path = await paths.get_model_path(path)
+            
+            logger.info(f"Loading ONNX model: {model_path}")
             
             # Configure session
             options = self._create_session_options()
@@ -56,7 +56,7 @@ class CPUBackend(BaseModelBackend):
             
             # Create session
             self._session = InferenceSession(
-                path,
+                model_path,
                 sess_options=options,
                 providers=["CPUExecutionProvider"],
                 provider_options=[provider_options]

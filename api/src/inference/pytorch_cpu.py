@@ -1,7 +1,6 @@
-"""GPU-based PyTorch inference backend."""
+"""CPU-based PyTorch inference backend."""
 
 import gc
-import os
 from typing import Optional
 
 import numpy as np
@@ -9,7 +8,8 @@ import torch
 from loguru import logger
 
 from ..builds.models import build_model
-from ..structures.model_schemas import GPUConfig
+from ..core import paths
+from ..structures.model_schemas import PyTorchCPUConfig
 from .base import BaseModelBackend
 
 
@@ -27,6 +27,8 @@ def forward(model: torch.nn.Module, tokens: list[int], ref_s: torch.Tensor, spee
         Generated audio
     """
     device = ref_s.device
+    pred_aln_trg = None
+    asr = None
     
     try:
         # Initial tensor setup
@@ -83,8 +85,11 @@ def forward(model: torch.nn.Module, tokens: list[int], ref_s: torch.Tensor, spee
         return result
         
     finally:
-        # Clean up largest tensors
-        del pred_aln_trg, asr
+        # Clean up largest tensors if they were created
+        if pred_aln_trg is not None:
+            del pred_aln_trg
+        if asr is not None:
+            del asr
 
 
 def length_to_mask(lengths: torch.Tensor) -> torch.Tensor:
@@ -105,19 +110,23 @@ def length_to_mask(lengths: torch.Tensor) -> torch.Tensor:
     return mask + 1 > lengths[:, None]
 
 
-class GPUBackend(BaseModelBackend):
-    """PyTorch GPU inference backend."""
+class PyTorchCPUBackend(BaseModelBackend):
+    """PyTorch CPU inference backend."""
 
     def __init__(self):
-        """Initialize GPU backend."""
+        """Initialize CPU backend."""
         super().__init__()
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA not available")
-        self._device = "cuda"
+        self._device = "cpu"
         self._model: Optional[torch.nn.Module] = None
-        self._config = GPUConfig()
+        self._config = PyTorchCPUConfig()
 
-    def load_model(self, path: str) -> None:
+        # Configure PyTorch CPU settings
+        if self._config.num_threads > 0:
+            torch.set_num_threads(self._config.num_threads)
+        if self._config.pin_memory:
+            torch.set_default_tensor_type(torch.FloatTensor)
+
+    async def load_model(self, path: str) -> None:
         """Load PyTorch model.
         
         Args:
@@ -127,11 +136,11 @@ class GPUBackend(BaseModelBackend):
             RuntimeError: If model loading fails
         """
         try:
-            if not os.path.exists(path):
-                raise RuntimeError(f"Model not found: {path}")
-
-            logger.info(f"Loading PyTorch model: {path}")
-            self._model = build_model(path, self._device)
+            # Get verified model path
+            model_path = await paths.get_model_path(path)
+            
+            logger.info(f"Loading PyTorch model on CPU: {model_path}")
+            self._model = await build_model(model_path, self._device)
             
         except Exception as e:
             raise RuntimeError(f"Failed to load PyTorch model: {e}")
@@ -142,7 +151,7 @@ class GPUBackend(BaseModelBackend):
         voice: torch.Tensor,
         speed: float = 1.0
     ) -> np.ndarray:
-        """Generate audio using GPU model.
+        """Generate audio using CPU model.
         
         Args:
             tokens: Input token IDs
@@ -159,59 +168,14 @@ class GPUBackend(BaseModelBackend):
             raise RuntimeError("Model not loaded")
 
         try:
-            # Check memory pressure
-            if self._check_memory():
-                self._clear_memory()
-
             # Prepare input
-            ref_s = voice[len(tokens)].clone().to(self._device)
+            ref_s = voice[len(tokens)].clone()
             
             # Generate audio
             return forward(self._model, tokens, ref_s, speed)
             
-        except RuntimeError as e:
-            if "out of memory" in str(e) and self._config.retry_on_oom:
-                logger.warning("OOM detected, attempting recovery")
-                self._clear_memory(full=True)
-                
-                # Retry generation
-                ref_s = voice[len(tokens)].clone().to(self._device)
-                return forward(self._model, tokens, ref_s, speed)
-            raise
-            
+        except Exception as e:
+            raise RuntimeError(f"Generation failed: {e}")
         finally:
-            if self._config.sync_cuda:
-                torch.cuda.synchronize()
-
-    def _check_memory(self) -> bool:
-        """Check if memory usage is above threshold.
-        
-        Returns:
-            True if memory should be cleared
-        """
-        if torch.cuda.is_available():
-            memory_gb = torch.cuda.memory_allocated() / 1e9
-            return memory_gb > self._config.memory_threshold
-        return False
-
-    def _clear_memory(self, full: bool = False) -> None:
-        """Clear GPU memory.
-        
-        Args:
-            full: Whether to perform full cleanup
-        """
-        if torch.cuda.is_available():
-            if full:
-                torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            if full:
-                gc.collect()
-                
-            # Log memory stats
-            allocated = torch.cuda.memory_allocated() / 1e9
-            reserved = torch.cuda.memory_reserved() / 1e9
-            logger.info(
-                f"GPU memory after cleanup: "
-                f"Allocated: {allocated:.2f}GB, "
-                f"Reserved: {reserved:.2f}GB"
-            )
+            # Clean up memory
+            gc.collect()

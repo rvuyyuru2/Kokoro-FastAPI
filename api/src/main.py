@@ -1,24 +1,97 @@
 """Main FastAPI application."""
 
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from .core import paths
 from .core.config import settings
 from .routers import openai_compatible, tts
 from .services import get_service
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for service initialization."""
+    logger.info("Initializing TTS service...")
+
+    # Initialize service
+    service = get_service()
+    model_manager = service._model_manager
+
+    try:
+        # Initialize model
+        model_path = (
+            settings.pytorch_model_path
+            if not settings.use_onnx
+            else settings.onnx_model_path
+        )
+        await model_manager.load_model(model_path)  # This includes warmup
+        service._validate_model()  # Ensure model is properly loaded
+
+        # Run warmup with first available voice
+        voice_names = await service.list_voices()
+        if not voice_names:
+            logger.error("No voices available for warmup")
+            raise RuntimeError("No voices found")
+            
+        first_voice = voice_names[0]
+        logger.info(f"Running warmup inference with voice: {first_voice}")
+        
+        # Run warmup inference with voice
+        try:
+            sample_text = (await paths.read_file(
+                os.path.join(os.path.dirname(__file__), "core", "don_quixote.txt")
+            )).splitlines()[0]
+            
+            async for _ in service.generate_stream(sample_text, first_voice):
+                pass
+            logger.info("Warmup complete")
+        except Exception as e:
+            logger.error(f"Warmup failed: {e}")
+            raise RuntimeError(f"Warmup failed: {e}")
+
+        # Log startup info
+        boundary = "░" * 24
+        startup_msg = f"""
+{boundary}
+
+    ╔═╗┌─┐┌─┐┌┬┐
+    ╠╣ ├─┤└─┐ │
+    ╚  ┴ ┴└─┘ ┴
+    ╦╔═┌─┐┬┌─┌─┐
+    ╠╩╗│ │├┴┐│ │
+    ╩ ╩└─┘┴ ┴└─┘
+
+{boundary}
+        """
+        startup_msg += f"\nModel backend: {model_manager.current_backend}"
+        startup_msg += f"\nAvailable voices: {len(voice_names)}"
+        startup_msg += f"\n{boundary}\n"
+        logger.info(startup_msg)
+
+        yield
+
+    finally:
+        # Use service's shutdown method for proper cleanup
+        await service.shutdown()
+
 
 # Create FastAPI app
 app = FastAPI(
     title=settings.api_title,
     description=settings.api_description,
-    version=settings.api_version
+    version=settings.api_version,
+    lifespan=lifespan
 )
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,33 +100,6 @@ app.add_middleware(
 # Include routers
 app.include_router(tts.router)
 app.include_router(openai_compatible.router)
-
-
-@app.on_event("startup")
-async def startup():
-    """Initialize on startup."""
-    logger.info("Initializing TTS service")
-    
-    # Initialize service
-    service = get_service()
-    
-    # Log configuration
-    logger.info(f"Using model backend: {service._model_manager.current_backend}")
-    logger.info(f"Available voices: {len(await service.list_voices())}")
-    logger.info("TTS service initialized")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Cleanup on shutdown."""
-    logger.info("Shutting down TTS service")
-    
-    # Get service instance
-    service = get_service()
-    
-    # Clean up resources
-    service._model_manager.unload_all()
-    logger.info("Resources cleaned up")
 
 
 @app.get("/health")

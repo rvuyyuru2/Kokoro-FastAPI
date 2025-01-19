@@ -81,7 +81,7 @@ async def stream_audio_chunks(
             text=request.input,
             voice=voice,
             speed=request.speed,
-            format=request.response_format
+            output_format=request.response_format  # Changed from format to output_format
         ):
             # Check for client disconnect
             if await client_request.is_disconnected():
@@ -135,7 +135,7 @@ async def create_speech(
                 text=request.input,
                 voice=voice,
                 speed=request.speed,
-                format=request.response_format
+                output_format=request.response_format  # Changed from format to output_format
             )
             
             return Response(

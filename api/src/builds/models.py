@@ -1,16 +1,16 @@
 # https://github.com/yl4579/StyleTTS2/blob/main/models.py
 import json
 import os
-import os.path as osp
-from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from loguru import logger
 from munch import Munch
 from torch.nn.utils import spectral_norm, weight_norm
 
+from ..core import paths
 from .istftnet import AdaIN1d, Decoder
 from .plbert import load_plbert
 
@@ -179,7 +179,6 @@ class AdaLayerNorm(nn.Module):
         gamma, beta = torch.chunk(h, chunks=2, dim=1)
         gamma, beta = gamma.transpose(1, -1), beta.transpose(1, -1)
         
-        
         x = F.layer_norm(x, (self.channels,), eps=self.eps)
         x = (1 + gamma) * x + beta
         return x.transpose(1, -1).transpose(-1, -2)
@@ -213,12 +212,15 @@ class ProsodyPredictor(nn.Module):
 
 
     def forward(self, texts, style, text_lengths, alignment, m):
+        # Ensure style has correct dimensions
+        if style.dim() == 2:
+            style = style.unsqueeze(0)
+        style = style.to(texts.device)
+        
+        # Get encoded representation
         d = self.text_encoder(texts, style, text_lengths, m)
-        
-        batch_size = d.shape[0]
-        text_size = d.shape[1]
-        
-        # predict duration
+
+        # Predict duration with proper device placement
         input_lengths = text_lengths.cpu().numpy()
         x = nn.utils.rnn.pack_padded_sequence(
             d, input_lengths, batch_first=True, enforce_sorted=False)
@@ -309,7 +311,6 @@ class DurationEncoder(nn.Module):
                 x = x.transpose(-1, -2)
                 
                 x_pad = torch.zeros([x.shape[0], x.shape[1], m.shape[-1]])
-
                 x_pad[:, :, :x.shape[-1]] = x
                 x = x_pad.to(x.device)
         
@@ -337,39 +338,84 @@ def recursive_munch(d):
     else:
         return d
 
-def build_model(path, device):
-    config = Path(__file__).parent / 'config.json'
-    assert config.exists(), f'Config path incorrect: config.json not found at {config}'
-    with open(config, 'r') as r:
-        args = recursive_munch(json.load(r))
-    assert args.decoder.type == 'istftnet', f'Unknown decoder type: {args.decoder.type}'
-    decoder = Decoder(dim_in=args.hidden_dim, style_dim=args.style_dim, dim_out=args.n_mels,
-            resblock_kernel_sizes = args.decoder.resblock_kernel_sizes,
-            upsample_rates = args.decoder.upsample_rates,
+async def build_model(path: str, device: str):
+    """Build model from config and weights.
+    
+    Args:
+        path: Path to model weights
+        device: Device to load model on
+        
+    Returns:
+        Built model
+        
+    Raises:
+        RuntimeError: If model building fails
+    """
+    try:
+        # Load config
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        config_text = await paths.read_file(config_path)
+        args = recursive_munch(json.loads(config_text))
+        
+        # Verify decoder type
+        assert args.decoder.type == 'istftnet', f'Unknown decoder type: {args.decoder.type}'
+        
+        # Build model components
+        decoder = Decoder(
+            dim_in=args.hidden_dim,
+            style_dim=args.style_dim,
+            dim_out=args.n_mels,
+            resblock_kernel_sizes=args.decoder.resblock_kernel_sizes,
+            upsample_rates=args.decoder.upsample_rates,
             upsample_initial_channel=args.decoder.upsample_initial_channel,
             resblock_dilation_sizes=args.decoder.resblock_dilation_sizes,
             upsample_kernel_sizes=args.decoder.upsample_kernel_sizes,
-            gen_istft_n_fft=args.decoder.gen_istft_n_fft, gen_istft_hop_size=args.decoder.gen_istft_hop_size)
-    text_encoder = TextEncoder(channels=args.hidden_dim, kernel_size=5, depth=args.n_layer, n_symbols=args.n_token)
-    predictor = ProsodyPredictor(style_dim=args.style_dim, d_hid=args.hidden_dim, nlayers=args.n_layer, max_dur=args.max_dur, dropout=args.dropout)
-    bert = load_plbert()
-    bert_encoder = nn.Linear(bert.config.hidden_size, args.hidden_dim)
-    for parent in [bert, bert_encoder, predictor, decoder, text_encoder]:
-        for child in parent.children():
-            if isinstance(child, nn.RNNBase):
-                child.flatten_parameters()
-    model = Munch(
-        bert=bert.to(device).eval(),
-        bert_encoder=bert_encoder.to(device).eval(),
-        predictor=predictor.to(device).eval(),
-        decoder=decoder.to(device).eval(),
-        text_encoder=text_encoder.to(device).eval(),
-    )
-    for key, state_dict in torch.load(path, map_location='cpu', weights_only=True)['net'].items():
-        assert key in model, key
-        try:
-            model[key].load_state_dict(state_dict)
-        except:
-            state_dict = {k[7:]: v for k, v in state_dict.items()}
-            model[key].load_state_dict(state_dict, strict=False)
-    return model
+            gen_istft_n_fft=args.decoder.gen_istft_n_fft,
+            gen_istft_hop_size=args.decoder.gen_istft_hop_size
+        )
+        text_encoder = TextEncoder(
+            channels=args.hidden_dim,
+            kernel_size=5,
+            depth=args.n_layer,
+            n_symbols=args.n_token
+        )
+        predictor = ProsodyPredictor(
+            style_dim=args.style_dim,
+            d_hid=args.hidden_dim,
+            nlayers=args.n_layer,
+            max_dur=args.max_dur,
+            dropout=args.dropout
+        )
+        bert = load_plbert()
+        bert_encoder = nn.Linear(bert.config.hidden_size, args.hidden_dim)
+        
+        # Flatten RNN parameters
+        for parent in [bert, bert_encoder, predictor, decoder, text_encoder]:
+            for child in parent.children():
+                if isinstance(child, nn.RNNBase):
+                    child.flatten_parameters()
+                    
+        # Create model container
+        model = Munch(
+            bert=bert.to(device).eval(),
+            bert_encoder=bert_encoder.to(device).eval(),
+            predictor=predictor.to(device).eval(),
+            decoder=decoder.to(device).eval(),
+            text_encoder=text_encoder.to(device).eval(),
+        )
+        
+        # Load weights
+        weights = torch.load(path, map_location='cpu', weights_only=True)['net']
+        for key, state_dict in weights.items():
+            assert key in model, key
+            try:
+                model[key].load_state_dict(state_dict)
+            except:
+                # Handle module prefix if present
+                state_dict = {k[7:]: v for k, v in state_dict.items()}
+                model[key].load_state_dict(state_dict, strict=False)
+                
+        return model
+        
+    except Exception as e:
+        raise RuntimeError(f"Failed to build model: {e}")

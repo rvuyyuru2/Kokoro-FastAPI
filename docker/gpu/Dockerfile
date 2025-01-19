@@ -24,19 +24,7 @@ RUN mkdir -p /app/models && \
 
 USER appuser
 
-# Download and extract models
-WORKDIR /app/models
-RUN curl -L -o model.tar.gz https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.0.1/kokoro-82m-pytorch.tar.gz && \
-    tar xzf model.tar.gz && \
-    rm model.tar.gz
-
-# Download and extract voice models
-WORKDIR /app/api/src/voices
-RUN curl -L -o voices.tar.gz https://github.com/remsky/Kokoro-FastAPI/releases/download/v0.0.1/voice-models.tar.gz && \
-    tar xzf voices.tar.gz && \
-    rm voices.tar.gz
-
-# Switch back to app directory
+# Switch to app directory
 WORKDIR /app
 
 # Copy dependency files

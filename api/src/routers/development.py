@@ -4,6 +4,7 @@ import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Response
 from loguru import logger
 
+from ..core import paths
 from ..services.audio import AudioService
 from ..services.text_processing import phonemize, tokenize
 from ..services.tts_model import TTSModel
@@ -82,27 +83,17 @@ async def generate_from_phonemes(
             detail={"error": "Invalid request", "message": "Phonemes cannot be empty"},
         )
 
-    # Validate voice exists
-    voice_path = tts_service._get_voice_path(request.voice)
-    if not voice_path:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Invalid request",
-                "message": f"Voice not found: {request.voice}",
-            },
-        )
-
     try:
-        # Load voice
-        voicepack = tts_service._load_voice(voice_path)
+        # Get voice path and load voice
+        voice_path = await tts_service._get_voice_path(request.voice)
+        voicepack = await paths.load_voice_tensor(voice_path)
 
         # Convert phonemes to tokens
         tokens = tokenize(request.phonemes)
         tokens = [0] + tokens + [0]  # Add start/end tokens
 
         # Generate audio directly from tokens
-        audio = TTSModel.generate_from_tokens(tokens, voicepack, request.speed)
+        audio = await TTSModel.generate_from_tokens(tokens, voicepack, request.speed)
 
         # Convert to WAV bytes
         wav_bytes = AudioService.convert_audio(

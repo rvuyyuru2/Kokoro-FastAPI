@@ -1,275 +1,64 @@
 """Text normalization for TTS preprocessing."""
 
 import re
-from typing import Dict, List, Optional, Pattern
-
-from loguru import logger
-
 from ..plugins import hookimpl
 
+@hookimpl
+def pre_process_text(text: str) -> str:
+    """Plugin hook for text pre-processing."""
+    return text
 
-class TextNormalizer:
-    """Handles text normalization for TTS input."""
+@hookimpl
+def post_process_text(text: str) -> str:
+    """Plugin hook for text post-processing."""
+    return text
 
-    def __init__(self):
-        """Initialize normalizer with patterns."""
-        # Common patterns
-        self._whitespace = re.compile(r'\s+')
-        self._multiple_periods = re.compile(r'\.{2,}')
-        self._multiple_exclaim = re.compile(r'!{2,}')
-        self._multiple_question = re.compile(r'\?{2,}')
-        self._url = re.compile(
-            r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
-        )
-        
-        # Number patterns
-        self._numbers = re.compile(r'\d+')
-        self._ordinal = re.compile(r'\d+(st|nd|rd|th)')
-        self._time = re.compile(r'\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?')
-        self._date = re.compile(r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}')
-        
-        # Special character replacements using unicode escapes
-        self._replacements = {
-            '\u201c': '"',  # left double quote
-            '\u201d': '"',  # right double quote
-            '\u2018': "'",  # left single quote
-            '\u2019': "'",  # right single quote
-            '\u2014': '-',  # em dash
-            '\u2013': '-',  # en dash
-            '\u2026': '...', # ellipsis
-            '\u00a0': ' ',  # non-breaking space
-            '\u200b': '',   # zero-width space
-            '\u200c': '',   # zero-width non-joiner
-            '\u200d': '',   # zero-width joiner
-        }
-        
-        # Compile replacement pattern
-        self._replacement_pattern = re.compile(
-            '|'.join(map(re.escape, self._replacements.keys()))
-        )
+def split_num(num: re.Match) -> str:
+    """Process numbers exactly as in reference implementation."""
+    num = num.group()
+    if '.' in num:
+        return num
+    elif ':' in num:
+        h, m = [int(n) for n in num.split(':')]
+        if m == 0:
+            return f"{h} o'clock"
+        elif m < 10:
+            return f'{h} oh {m}'
+        return f'{h} {m}'
+    year = int(num[:4])
+    if year < 1100 or year % 1000 < 10:
+        return num
+    left, right = num[:2], int(num[2:4])
+    s = 's' if num.endswith('s') else ''
+    if 100 <= year % 1000 <= 999:
+        if right == 0:
+            return f'{left} hundred{s}'
+        elif right < 10:
+            return f'{left} oh {right}{s}'
+    return f'{left} {right}{s}'
 
-    @hookimpl
-    def pre_process_text(self, text: str) -> str:
-        """Plugin hook for text pre-processing.
-        
-        Args:
-            text: Raw input text
-            
-        Returns:
-            Pre-processed text
-        """
-        return text
+def flip_money(m: re.Match) -> str:
+    """Process money expressions exactly as in reference implementation."""
+    m = m.group()
+    bill = 'dollar' if m[0] == '$' else 'pound'
+    if m[-1].isalpha():
+        return f'{m[1:]} {bill}s'
+    elif '.' not in m:
+        s = '' if m[1:] == '1' else 's'
+        return f'{m[1:]} {bill}{s}'
+    b, c = m[1:].split('.')
+    s = '' if b == '1' else 's'
+    c = int(c.ljust(2, '0'))
+    coins = f"cent{'' if c == 1 else 's'}" if m[0] == '$' else ('penny' if c == 1 else 'pence')
+    return f'{b} {bill}{s} and {c} {coins}'
 
-    @hookimpl
-    def post_process_text(self, text: str) -> str:
-        """Plugin hook for text post-processing.
-        
-        Args:
-            text: Normalized text
-            
-        Returns:
-            Post-processed text
-        """
-        return text
-
-    def normalize(self, text: str) -> str:
-        """Normalize input text.
-        
-        Args:
-            text: Input text to normalize
-            
-        Returns:
-            Normalized text
-            
-        Raises:
-            ValueError: If input text is invalid
-        """
-        if not isinstance(text, str):
-            raise ValueError("Input must be string")
-        
-        if not text.strip():
-            raise ValueError("Input text is empty")
-
-        try:
-            # Apply pre-processing hook
-            text = self.pre_process_text(text)
-            
-            # Basic cleanup
-            text = self._clean_whitespace(text)
-            text = self._replace_special_chars(text)
-            
-            # Handle special cases
-            text = self._normalize_urls(text)
-            text = self._normalize_numbers(text)
-            text = self._normalize_punctuation(text)
-            
-            # Apply post-processing hook
-            text = self.post_process_text(text)
-            
-            return text.strip()
-            
-        except Exception as e:
-            logger.error(f"Text normalization failed: {e}")
-            raise
-
-    def _clean_whitespace(self, text: str) -> str:
-        """Clean and normalize whitespace.
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            Text with normalized whitespace
-        """
-        return self._whitespace.sub(' ', text)
-
-    def _replace_special_chars(self, text: str) -> str:
-        """Replace special characters with normalized versions.
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            Text with special characters replaced
-        """
-        return self._replacement_pattern.sub(
-            lambda m: self._replacements[m.group()],
-            text
-        )
-
-    def _normalize_urls(self, text: str) -> str:
-        """Handle URLs in text.
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            Text with normalized URLs
-        """
-        return self._url.sub('[URL]', text)
-
-    def _normalize_numbers(self, text: str) -> str:
-        """Normalize numbers and dates.
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            Text with normalized numbers
-        """
-        # Handle dates
-        text = self._date.sub(
-            lambda m: self._format_date(m.group()),
-            text
-        )
-        
-        # Handle times
-        text = self._time.sub(
-            lambda m: self._format_time(m.group()),
-            text
-        )
-        
-        # Handle ordinals
-        text = self._ordinal.sub(
-            lambda m: self._format_ordinal(m.group()),
-            text
-        )
-        
-        # Handle regular numbers
-        text = self._numbers.sub(
-            lambda m: self._format_number(m.group()),
-            text
-        )
-        
-        return text
-
-    def _normalize_punctuation(self, text: str) -> str:
-        """Normalize punctuation marks.
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            Text with normalized punctuation
-        """
-        # Normalize multiple periods
-        text = self._multiple_periods.sub('...', text)
-        
-        # Normalize multiple exclamation marks
-        text = self._multiple_exclaim.sub('!', text)
-        
-        # Normalize multiple question marks
-        text = self._multiple_question.sub('?', text)
-        
-        return text
-
-    def _format_date(self, date: str) -> str:
-        """Format date string (placeholder).
-        
-        Args:
-            date: Date string
-            
-        Returns:
-            Formatted date
-        """
-        # TODO: Implement proper date formatting
-        return date
-
-    def _format_time(self, time: str) -> str:
-        """Format time string (placeholder).
-        
-        Args:
-            time: Time string
-            
-        Returns:
-            Formatted time
-        """
-        # TODO: Implement proper time formatting
-        return time
-
-    def _format_ordinal(self, number: str) -> str:
-        """Format ordinal number (placeholder).
-        
-        Args:
-            number: Ordinal number string
-            
-        Returns:
-            Formatted ordinal
-        """
-        # TODO: Implement proper ordinal formatting
-        return number
-
-    def _format_number(self, number: str) -> str:
-        """Format regular number (placeholder).
-        
-        Args:
-            number: Number string
-            
-        Returns:
-            Formatted number
-        """
-        # TODO: Implement proper number formatting
-        return number
-
-
-# Module-level instance for convenience
-_normalizer: Optional[TextNormalizer] = None
-
-
-def get_normalizer() -> TextNormalizer:
-    """Get or create global normalizer instance.
-    
-    Returns:
-        TextNormalizer instance
-    """
-    global _normalizer
-    if _normalizer is None:
-        _normalizer = TextNormalizer()
-    return _normalizer
-
+def point_num(num: re.Match) -> str:
+    """Process decimal numbers exactly as in reference implementation."""
+    a, b = num.group().split('.')
+    return ' point '.join([a, ' '.join(b)])
 
 def normalize_text(text: str) -> str:
-    """Normalize text using global normalizer instance.
+    """Normalize text exactly as in reference implementation.
     
     Args:
         text: Input text to normalize
@@ -277,4 +66,53 @@ def normalize_text(text: str) -> str:
     Returns:
         Normalized text
     """
-    return get_normalizer().normalize(text)
+    # Apply pre-processing hook
+    text = pre_process_text(text)
+    
+    # Quote normalization
+    text = text.replace(chr(8216), "'").replace(chr(8217), "'")
+    text = text.replace('«', chr(8220)).replace('»', chr(8221))
+    text = text.replace(chr(8220), '"').replace(chr(8221), '"')
+    text = text.replace('(', '«').replace(')', '»')
+    
+    # Punctuation normalization
+    for a, b in zip('、。！，：；？', ',.!,:;?'):
+        text = text.replace(a, b+' ')
+    
+    # Whitespace normalization
+    text = re.sub(r'[^\S \n]', ' ', text)
+    text = re.sub(r'  +', ' ', text)
+    text = re.sub(r'(?<=\n) +(?=\n)', '', text)
+    
+    # Title/abbreviation normalization
+    text = re.sub(r'\bD[Rr]\.(?= [A-Z])', 'Doctor', text)
+    text = re.sub(r'\b(?:Mr\.|MR\.(?= [A-Z]))', 'Mister', text)
+    text = re.sub(r'\b(?:Ms\.|MS\.(?= [A-Z]))', 'Miss', text)
+    text = re.sub(r'\b(?:Mrs\.|MRS\.(?= [A-Z]))', 'Mrs', text)
+    text = re.sub(r'\betc\.(?! [A-Z])', 'etc', text)
+    
+    # Word normalization
+    text = re.sub(r'(?i)\b(y)eah?\b', r"\1e'a", text)
+    
+    # Number processing
+    text = re.sub(r'\d*\.\d+|\b\d{4}s?\b|(?<!:)\b(?:[1-9]|1[0-2]):[0-5]\d\b(?!:)', split_num, text)
+    text = re.sub(r'(?<=\d),(?=\d)', '', text)
+    
+    # Money processing
+    text = re.sub(r'(?i)[$£]\d+(?:\.\d+)?(?: hundred| thousand| (?:[bm]|tr)illion)*\b|[$£]\d+\.\d\d?\b', flip_money, text)
+    
+    # Decimal number processing
+    text = re.sub(r'\d*\.\d+', point_num, text)
+    
+    # Additional normalization
+    text = re.sub(r'(?<=\d)-(?=\d)', ' to ', text)
+    text = re.sub(r'(?<=\d)S', ' S', text)
+    text = re.sub(r"(?<=[BCDFGHJ-NP-TV-Z])'?s\b", "'S", text)
+    text = re.sub(r"(?<=X')S\b", 's', text)
+    text = re.sub(r'(?:[A-Za-z]\.){2,} [a-z]', lambda m: m.group().replace('.', '-'), text)
+    text = re.sub(r'(?i)(?<=[A-Z])\.(?=[A-Z])', '-', text)
+    
+    # Apply post-processing hook
+    text = post_process_text(text)
+    
+    return text.strip()

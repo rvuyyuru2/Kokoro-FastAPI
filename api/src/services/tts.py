@@ -1,14 +1,14 @@
 """TTS service implementation."""
 
-import os
 import time
 from dataclasses import dataclass
 from typing import AsyncIterator, List, Optional, Tuple
 
-import aiofiles.os
 import numpy as np
 import torch
 from loguru import logger
+
+from ..core import paths
 
 from ..structures.audio_schemas import AudioConfig
 from ..audio_processing import (
@@ -40,14 +40,14 @@ class TTSService:
         Args:
             config: Optional service configuration
         """
-        self._config = config or ServiceConfig()
-        self._model_manager = get_manager(self._config.model)
-        self._audio_processor = get_audio_processor(self._config.audio)
-        self._voices_dir = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            self._config.voices_dir
-        )
+        try:
+            self._config = config or ServiceConfig()
+            self._model_manager = get_manager(self._config.model)
+            self._audio_processor = get_audio_processor(self._config.audio)
+            logger.info("TTS service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize TTS service: {e}")
+            raise RuntimeError(f"Service initialization failed: {e}")
 
     @hookimpl
     def pre_process_text(self, text: str) -> str:
@@ -100,19 +100,25 @@ class TTSService:
             text = self.pre_process_text(text)
 
             # Process text
-            token_sequences = process_text(text)
-            if not token_sequences:
-                raise ValueError("No valid text chunks")
+            logger.info("Processing text input")
+            try:
+                token_sequences = process_text(text)
+                if not token_sequences:
+                    raise ValueError("Text processing produced no valid chunks")
+                logger.debug(f"Generated {len(token_sequences)} token sequences")
+            except Exception as e:
+                logger.error(f"Text processing failed: {e}")
+                raise ValueError(f"Text processing failed: {e}")
 
             # Load voice
-            voice_path = self._get_voice_path(voice)
+            voice_path = await self._get_voice_path(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
 
             # Generate audio
             audio_chunks = []
             for tokens in token_sequences:
-                chunk_audio = self._model_manager.generate(
+                chunk_audio = await self._model_manager.generate(
                     tokens,
                     voice_path,
                     speed
@@ -170,13 +176,19 @@ class TTSService:
             text = self.pre_process_text(text)
 
             # Process text
-            token_sequences = process_text(text)
-            if not token_sequences:
-                raise ValueError("No valid text chunks")
+            logger.info("Processing text input for streaming")
+            try:
+                token_sequences = process_text(text)
+                if not token_sequences:
+                    raise ValueError("Text processing produced no valid chunks")
+                logger.debug(f"Generated {len(token_sequences)} token sequences for streaming")
+            except Exception as e:
+                logger.error(f"Text processing failed for streaming: {e}")
+                raise ValueError(f"Text processing failed: {e}")
 
             # Load voice
             voice_start = time.time()
-            voice_path = self._get_voice_path(voice)
+            voice_path = await self._get_voice_path(voice)
             if not voice_path:
                 raise ValueError(f"Voice not found: {voice}")
             logger.debug(
@@ -190,7 +202,7 @@ class TTSService:
             for i, tokens in enumerate(token_sequences):
                 try:
                     # Generate audio
-                    chunk_audio = self._model_manager.generate(
+                    chunk_audio = await self._model_manager.generate(
                         tokens,
                         voice_path,
                         speed
@@ -249,15 +261,12 @@ class TTSService:
 
             for voice in voices:
                 try:
-                    voice_path = self._get_voice_path(voice)
+                    voice_path = await self._get_voice_path(voice)
                     if not voice_path:
                         raise ValueError(f"Voice not found: {voice}")
 
-                    tensor = torch.load(
-                        voice_path,
-                        map_location="cpu",
-                        weights_only=True
-                    )
+                    # Load voice tensor
+                    tensor = await paths.load_voice_tensor(voice_path)
                     voice_tensors.append(tensor)
                     voice_names.append(voice)
 
@@ -271,46 +280,60 @@ class TTSService:
             # Combine voices
             combined_id = "_".join(voice_names)
             combined_tensor = torch.mean(torch.stack(voice_tensors), dim=0)
-            combined_path = os.path.join(
-                self._voices_dir,
-                f"{combined_id}.pt"
-            )
-
+            
             # Save combined voice
-            torch.save(combined_tensor, combined_path)
+            combined_path = await paths.get_voice_path(combined_id)
+            await paths.save_voice_tensor(combined_tensor, combined_path)
+            
             return combined_id
 
         except Exception as e:
             logger.error(f"Voice combination failed: {e}")
             raise
 
-    async def list_voices(self) -> List[str]:
-        """List available voices.
-        
-        Returns:
-            List of voice IDs
-        """
-        voices = []
-        try:
-            it = await aiofiles.os.scandir(self._voices_dir)
-            for entry in it:
-                if entry.name.endswith(".pt"):
-                    voices.append(entry.name[:-3])
-        except Exception as e:
-            logger.error(f"Failed to list voices: {e}")
-        return sorted(voices)
-
-    def _get_voice_path(self, voice: str) -> Optional[str]:
+    async def _get_voice_path(self, voice: str) -> str:
         """Get path to voice file.
         
         Args:
             voice: Voice ID
             
         Returns:
-            Voice file path or None if not found
+            Voice file path
+            
+        Raises:
+            ValueError: If voice not found
         """
-        path = os.path.join(self._voices_dir, f"{voice}.pt")
-        return path if os.path.exists(path) else None
+        try:
+            return await paths.get_voice_path(voice)
+        except RuntimeError as e:
+            raise ValueError(str(e))
+
+    async def shutdown(self):
+        """Cleanup resources on shutdown."""
+        logger.info("Shutting down TTS service")
+        self._model_manager.unload_all()
+        logger.info("Resources cleaned up")
+
+    def _validate_model(self) -> None:
+        """Validate model is loaded.
+        
+        Raises:
+            RuntimeError: If model is not loaded
+        """
+        if not self._model_manager.get_backend().is_loaded:
+            raise RuntimeError("Model not loaded")
+
+    async def list_voices(self) -> List[str]:
+        """List all available voices.
+        
+        Returns:
+            List of voice IDs
+        """
+        try:
+            return await paths.list_voices()
+        except Exception as e:
+            logger.error(f"Error listing voices: {e}")
+            return []
 
 
 # Module-level instance

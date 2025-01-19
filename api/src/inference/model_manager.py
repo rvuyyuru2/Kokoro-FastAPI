@@ -6,9 +6,12 @@ from typing import Dict, Optional, Union
 import torch
 from loguru import logger
 
-from .base import ModelBackend
-from .cpu import CPUBackend
-from .gpu import GPUBackend
+from .base import BaseModelBackend
+from .onnx_cpu import ONNXCPUBackend
+from .onnx_gpu import ONNXGPUBackend
+from .pytorch_cpu import PyTorchCPUBackend
+from .pytorch_gpu import PyTorchGPUBackend
+from ..core import paths
 from ..core.config import settings
 from ..structures.model_schemas import ModelConfig
 
@@ -23,40 +26,52 @@ class ModelManager:
             config: Optional configuration
         """
         self._config = config or ModelConfig()
-        self._backends: Dict[str, ModelBackend] = {}
+        self._backends: Dict[str, BaseModelBackend] = {}
         self._voice_cache: Dict[str, torch.Tensor] = {}
         self._current_backend: Optional[str] = None
         self._initialize_backends()
 
     def _initialize_backends(self) -> None:
         """Initialize available backends."""
+        # Initialize GPU backends if available
         if settings.use_gpu and torch.cuda.is_available():
             try:
-                self._backends['gpu'] = GPUBackend()
-                self._current_backend = 'gpu'
-                logger.info("Initialized GPU backend")
+                # PyTorch GPU
+                self._backends['pytorch_gpu'] = PyTorchGPUBackend()
+                self._current_backend = 'pytorch_gpu'
+                logger.info("Initialized PyTorch GPU backend")
+                
+                # ONNX GPU
+                self._backends['onnx_gpu'] = ONNXGPUBackend()
+                logger.info("Initialized ONNX GPU backend")
             except Exception as e:
-                logger.error(f"Failed to initialize GPU backend: {e}")
+                logger.error(f"Failed to initialize GPU backends: {e}")
                 # Fallback to CPU if GPU fails
-                self._initialize_cpu()
+                self._initialize_cpu_backends()
         else:
-            self._initialize_cpu()
+            self._initialize_cpu_backends()
 
-    def _initialize_cpu(self) -> None:
-        """Initialize CPU backend."""
+    def _initialize_cpu_backends(self) -> None:
+        """Initialize CPU backends."""
         try:
-            self._backends['cpu'] = CPUBackend()
-            self._current_backend = 'cpu'
-            logger.info("Initialized CPU backend")
+            # PyTorch CPU
+            self._backends['pytorch_cpu'] = PyTorchCPUBackend()
+            self._current_backend = 'pytorch_cpu'
+            logger.info("Initialized PyTorch CPU backend")
+            
+            # ONNX CPU
+            self._backends['onnx_cpu'] = ONNXCPUBackend()
+            logger.info("Initialized ONNX CPU backend")
         except Exception as e:
-            logger.error(f"Failed to initialize CPU backend: {e}")
+            logger.error(f"Failed to initialize CPU backends: {e}")
             raise RuntimeError("No backends available")
 
-    def get_backend(self, backend_type: Optional[str] = None) -> ModelBackend:
+    def get_backend(self, backend_type: Optional[str] = None) -> BaseModelBackend:
         """Get specified backend.
         
         Args:
-            backend_type: Backend type ('cpu' or 'gpu'), uses default if None
+            backend_type: Backend type ('pytorch_cpu', 'pytorch_gpu', 'onnx_cpu', 'onnx_gpu'),
+                         uses default if None
             
         Returns:
             Model backend instance
@@ -72,11 +87,31 @@ class ModelManager:
             backend_type = self._current_backend
         
         if backend_type not in self._backends:
-            raise ValueError(f"Invalid backend type: {backend_type}")
+            raise ValueError(
+                f"Invalid backend type: {backend_type}. "
+                f"Available backends: {', '.join(self._backends.keys())}"
+            )
 
         return self._backends[backend_type]
 
-    def load_model(
+    def _determine_backend(self, model_path: str) -> str:
+        """Determine appropriate backend based on model file.
+        
+        Args:
+            model_path: Path to model file
+            
+        Returns:
+            Backend type to use
+        """
+        is_onnx = model_path.lower().endswith('.onnx')
+        has_gpu = settings.use_gpu and torch.cuda.is_available()
+        
+        if is_onnx:
+            return 'onnx_gpu' if has_gpu else 'onnx_cpu'
+        else:
+            return 'pytorch_gpu' if has_gpu else 'pytorch_cpu'
+
+    async def load_model(
         self,
         model_path: str,
         backend_type: Optional[str] = None
@@ -90,17 +125,52 @@ class ModelManager:
         Raises:
             RuntimeError: If model loading fails
         """
-        if not os.path.exists(model_path):
-            raise ValueError(f"Model file not found: {model_path}")
-
-        backend = self.get_backend(backend_type)
         try:
-            backend.load_model(model_path)
-            logger.info(f"Loaded model on {backend_type or self._current_backend} backend")
+            # Get absolute model path
+            abs_path = await paths.get_model_path(model_path)
+            
+            # Auto-determine backend if not specified
+            if backend_type is None:
+                backend_type = self._determine_backend(abs_path)
+            
+            backend = self.get_backend(backend_type)
+            
+            # Load model and run warmup
+            await backend.load_model(abs_path)
+            logger.info(f"Loaded model on {backend_type} backend")
+            await self._warmup_inference(backend)
+            
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {e}")
+            
+    async def _warmup_inference(self, backend: BaseModelBackend) -> None:
+        """Run warmup inference to initialize model."""
+        try:
+            # Import here to avoid circular imports
+            from ..text_processing import process_text
+            
+            # Load a real voice for warmup
+            voice_path = await paths.get_voice_path("af")  # Use default voice
+            voice = await paths.load_voice_tensor(voice_path, device=backend.device)
+            logger.info("Loaded voice for warmup")
+            
+            # Use real text
+            text = "Testing text to speech synthesis."
+            logger.info(f"Running warmup inference with voice: af")
+            
+            # Process through pipeline
+            sequences = process_text(text)
+            if not sequences:
+                raise ValueError("Text processing failed")
+            
+            # Run inference
+            backend.generate(sequences[0], voice, speed=1.0)
+            
+        except Exception as e:
+            logger.warning(f"Warmup inference failed: {e}")
+            raise
 
-    def load_voice(
+    async def load_voice(
         self,
         voice_path: str,
         backend_type: Optional[str] = None
@@ -124,8 +194,7 @@ class ModelManager:
         try:
             # Load voice tensor
             backend = self.get_backend(backend_type)
-            device = backend.device
-            voice = torch.load(voice_path, map_location=device)
+            voice = await paths.load_voice_tensor(voice_path, device=backend.device)
 
             # Cache if enabled
             if self._config.cache_voices:
@@ -146,7 +215,7 @@ class ModelManager:
             del self._voice_cache[oldest]
             logger.debug(f"Removed from voice cache: {oldest}")
 
-    def generate(
+    async def generate(
         self,
         tokens: list[int],
         voice_path: str,
@@ -173,7 +242,7 @@ class ModelManager:
 
         try:
             # Load voice
-            voice = self.load_voice(voice_path, backend_type)
+            voice = await self.load_voice(voice_path, backend_type)
             
             # Generate audio
             return backend.generate(tokens, voice, speed)

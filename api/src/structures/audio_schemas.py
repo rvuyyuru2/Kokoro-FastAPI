@@ -10,7 +10,7 @@ class PadStrategy(Enum):
     SILENCE = "silence"  # Pure silence
     FADE = "fade"  # Fade to silence
     NOISE = "noise"  # Low-level noise
-    REPEAT = "repeat"  # Repeat edge content
+
 
 
 @dataclass
@@ -18,14 +18,38 @@ class FormatConfig:
     """Audio format configuration."""
     
     # MP3 settings
-    mp3_bitrate_mode: str = "CONSTANT"
-    mp3_compression: float = 0.0
+    mp3_bitrate_mode: str = "CONSTANT"  # Faster than variable bitrate
+    mp3_compression_level: float = 0.0  # Balanced compression
     
     # Opus settings
-    opus_compression: float = 0.0
+    opus_compression_level: float = 0.0  # Good balance for speech
     
     # FLAC settings
-    flac_compression: float = 0.0
+    flac_compression_level: float = 0.0  # Light compression, still fast
+
+    def get_format_settings(self, format: str) -> dict:
+        """Get format-specific settings.
+        
+        Args:
+            format: Audio format (mp3, opus, flac)
+            
+        Returns:
+            Dictionary of format settings
+        """
+        if format == "mp3":
+            return {
+                "bitrate_mode": self.mp3_bitrate_mode,
+                "compression_level": self.mp3_compression_level
+            }
+        elif format == "opus":
+            return {
+                "compression_level": self.opus_compression_level
+            }
+        elif format == "flac":
+            return {
+                "compression_level": self.flac_compression_level
+            }
+        return {}
 
 
 @dataclass

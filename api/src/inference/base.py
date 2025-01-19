@@ -11,7 +11,7 @@ class ModelBackend(ABC):
     """Abstract base class for model inference backends."""
 
     @abstractmethod
-    def load_model(self, path: str) -> None:
+    async def load_model(self, path: str) -> None:
         """Load model from path.
         
         Args:

@@ -1,18 +1,20 @@
-"""Inference module for model management and generation."""
+"""Inference backends and model management."""
 
-from .base import ModelBackend
+from .base import BaseModelBackend
 from .model_manager import ModelManager, get_manager
-from .cpu import CPUBackend
-from .gpu import GPUBackend
-from ..structures.model_schemas import ModelConfig, ONNXConfig, GPUConfig
+from .onnx_cpu import ONNXCPUBackend
+from .onnx_gpu import ONNXGPUBackend
+from .pytorch_cpu import PyTorchCPUBackend
+from .pytorch_gpu import PyTorchGPUBackend
+from ..structures.model_schemas import ModelConfig
 
 __all__ = [
-    "ModelBackend",
-    "ModelManager",
-    "CPUBackend",
-    "GPUBackend",
-    "ModelConfig",
-    "ONNXConfig",
-    "GPUConfig",
-    "get_manager"
+    'BaseModelBackend',
+    'ModelManager',
+    'get_manager',
+    'ModelConfig',
+    'ONNXCPUBackend',
+    'ONNXGPUBackend', 
+    'PyTorchCPUBackend',
+    'PyTorchGPUBackend'
 ]

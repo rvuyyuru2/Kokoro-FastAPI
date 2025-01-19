@@ -31,7 +31,6 @@ from .padding import (
 from .post_processor import (
     AudioEffect,
     AudioPostProcessor,
-    CompressorEffect,
     FadeEffect,
     post_process_audio,
     get_post_processor
@@ -199,7 +198,6 @@ __all__ = [
     "AudioEffect",
     
     # Effects
-    "CompressorEffect",
     "FadeEffect",
     
     # Configurations

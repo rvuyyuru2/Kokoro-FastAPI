@@ -8,6 +8,7 @@ services:
     volumes:
       - ../../api/src:/app/api/src  # Mount src for development
       - ../../api/src/voices:/app/api/src/voices  # Mount voices for persistence
+      - ../../models:/app/models  # Mount pre-downloaded models
     ports:
       - "8880:8880"
     environment:
