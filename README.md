@@ -2,13 +2,16 @@
   <img src="githubbanner.png" alt="Kokoro TTS Banner">
 </p>
 
+
+> [!NOTE]
+> This is a pre-release build implementing a new structure towards supporting plug-in hooks, multiple backend configurations, better concurrency and resource management. It's currently incomplete; with only the openai endpoint tested on a single format and voice, for CPU ONNX and GPU Pytorch 
+
+
 # <sub><sub>_`FastKoko`_ </sub></sub>
 [![Tests](https://img.shields.io/badge/tests-117%20passed-darkgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-60%25-grey)]()
 [![Tested at Model Commit](https://img.shields.io/badge/last--tested--model--commit-a67f113-blue)](https://huggingface.co/hexgrad/Kokoro-82M/tree/c3b0d86e2a980e027ef71c28819ea02e351c2667) [![Try on Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Try%20on-Spaces-blue)](https://huggingface.co/spaces/Remsky/Kokoro-TTS-Zero)
 
-> [!NOTE]
-> This is a pre-release build implementing a new structure, supporting plug-in hooks 
 
 Dockerized FastAPI wrapper for [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) text-to-speech model
 - OpenAI-compatible Speech endpoint, with inline voice combination functionality

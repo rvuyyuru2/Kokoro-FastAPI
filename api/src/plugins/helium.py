@@ -24,7 +24,7 @@ class HeliumPlugin(AudioPluginBase):
         num_samples = len(processed)
         
         # high pitch helium effect
-        pitch_factor = 2.0
+        pitch_factor = 1.2
         new_num_samples = int(num_samples / pitch_factor)
         
         logger.info(f"Resampling from {num_samples} to {new_num_samples} samples")
