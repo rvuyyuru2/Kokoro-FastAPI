@@ -7,6 +7,18 @@ import numpy as np
 import torch
 
 
+from enum import Enum, auto
+
+
+class ModelState(Enum):
+    """Model lifecycle states."""
+    UNINITIALIZED = auto()  # Initial state
+    LOADED = auto()         # Model weights/file loaded
+    WARMED_UP = auto()      # Completed warmup, ready for inference
+    FAILED = auto()         # Failed state (load/warmup failed)
+    UNLOADED = auto()       # Explicitly unloaded
+
+
 class ModelBackend(ABC):
     """Abstract base class for model inference backends."""
 
@@ -19,6 +31,19 @@ class ModelBackend(ABC):
             
         Raises:
             RuntimeError: If model loading fails
+        """
+        pass
+
+    @abstractmethod
+    async def warmup(self) -> None:
+        """Run model warmup.
+        
+        This should be called after load_model() to prepare the model
+        for inference. Implementations should perform any necessary
+        initialization like initial forward passes.
+        
+        Raises:
+            RuntimeError: If warmup fails
         """
         pass
 
@@ -40,7 +65,7 @@ class ModelBackend(ABC):
             Generated audio samples
             
         Raises:
-            RuntimeError: If generation fails
+            RuntimeError: If generation fails or model not ready
         """
         pass
 
@@ -51,13 +76,31 @@ class ModelBackend(ABC):
 
     @property
     @abstractmethod
+    def state(self) -> ModelState:
+        """Get current model state.
+        
+        Returns:
+            Current state of the model
+        """
+        pass
+
+    @property
     def is_loaded(self) -> bool:
         """Check if model is loaded.
         
         Returns:
-            True if model is loaded, False otherwise
+            True if model is loaded (but may not be warmed up), False otherwise
         """
-        pass
+        return self.state in (ModelState.LOADED, ModelState.WARMED_UP)
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if model is ready for inference.
+        
+        Returns:
+            True if model is loaded AND warmed up, False otherwise
+        """
+        return self.state == ModelState.WARMED_UP
 
     @property
     @abstractmethod
@@ -75,13 +118,13 @@ class BaseModelBackend(ModelBackend):
 
     def __init__(self):
         """Initialize base backend."""
-        self._model: Optional[torch.nn.Module] = None
+        self._state = ModelState.UNINITIALIZED
         self._device: str = "cpu"
 
     @property
-    def is_loaded(self) -> bool:
-        """Check if model is loaded."""
-        return self._model is not None
+    def state(self) -> ModelState:
+        """Get current model state."""
+        return self._state
 
     @property
     def device(self) -> str:
@@ -90,8 +133,11 @@ class BaseModelBackend(ModelBackend):
 
     def unload(self) -> None:
         """Unload model and free resources."""
-        if self._model is not None:
-            del self._model
-            self._model = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        if self.is_loaded:
+            self._cleanup_resources()
+            self._state = ModelState.UNLOADED
+
+    def _cleanup_resources(self) -> None:
+        """Clean up model resources. Override in subclasses."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

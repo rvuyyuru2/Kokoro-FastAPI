@@ -37,10 +37,13 @@ async def lifespan(app: FastAPI):
             if not settings.use_onnx
             else settings.onnx_model_path
         )
-        await model_manager.load_model(model_path)  # This includes warmup
-        service._validate_model()  # Ensure model is properly loaded
+        # Load and warmup model
+        await model_manager.load_model(model_path)
+        backend = model_manager.get_backend()
+        await backend.warmup()
+        service._validate_model()  # Ensure model is properly loaded and warmed up
 
-        # Run warmup with first available voice
+        # Run voice warmup
         voice_names = await service.list_voices()
         if not voice_names:
             logger.error("No voices available for warmup")

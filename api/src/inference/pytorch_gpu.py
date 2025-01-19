@@ -10,7 +10,7 @@ from loguru import logger
 from ..builds.models import build_model
 from ..core import paths
 from ..structures.model_schemas import PyTorchConfig
-from .base import BaseModelBackend
+from .base import BaseModelBackend, ModelState
 
 
 @torch.no_grad()
@@ -97,6 +97,7 @@ class PyTorchGPUBackend(BaseModelBackend):
         self._device = "cuda"
         self._model: Optional[torch.nn.Module] = None
         self._config = PyTorchConfig()
+        self._state = ModelState.UNINITIALIZED
 
     async def load_model(self, path: str) -> None:
         """Load PyTorch model.
@@ -113,9 +114,36 @@ class PyTorchGPUBackend(BaseModelBackend):
             
             logger.info(f"Loading PyTorch model: {model_path}")
             self._model = await build_model(model_path, self._device)
+            self._state = ModelState.LOADED
+            logger.info("PyTorch model loaded successfully")
             
         except Exception as e:
+            self._state = ModelState.FAILED
             raise RuntimeError(f"Failed to load PyTorch model: {e}")
+
+    async def warmup(self) -> None:
+        """Run model warmup.
+        
+        Raises:
+            RuntimeError: If warmup fails
+        """
+        if not self.is_loaded:
+            raise RuntimeError("Cannot warmup - model not loaded")
+            
+        try:
+            # Create dummy inputs for warmup
+            tokens = [1, 2, 3]  # Minimal token sequence
+            ref_s = torch.zeros((1, 256), dtype=torch.float32).to(self._device)
+            
+            # Run inference
+            forward(self._model, tokens, ref_s, speed=1.0)
+            
+            self._state = ModelState.WARMED_UP
+            logger.info("PyTorch model warmup completed")
+            
+        except Exception as e:
+            self._state = ModelState.FAILED
+            raise RuntimeError(f"Model warmup failed: {e}")
 
     def generate(
         self,
@@ -136,8 +164,8 @@ class PyTorchGPUBackend(BaseModelBackend):
         Raises:
             RuntimeError: If generation fails
         """
-        if not self.is_loaded:
-            raise RuntimeError("Model not loaded")
+        if not self.is_ready:
+            raise RuntimeError("Model not ready for inference")
 
         try:
             # Check memory and cleanup if needed
@@ -168,3 +196,10 @@ class PyTorchGPUBackend(BaseModelBackend):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             gc.collect()
+
+    @property
+    def state(self) -> ModelState:
+        """Get current model state."""
+        if self._model is None:
+            return ModelState.UNINITIALIZED
+        return self._state

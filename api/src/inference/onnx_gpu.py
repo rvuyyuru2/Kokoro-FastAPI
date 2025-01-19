@@ -15,7 +15,7 @@ from onnxruntime import (
 from ..core import paths
 from ..core.config import settings
 from ..structures.model_schemas import ONNXGPUConfig
-from .base import BaseModelBackend
+from .base import BaseModelBackend, ModelState
 
 
 class ONNXGPUBackend(BaseModelBackend):
@@ -67,9 +67,45 @@ class ONNXGPUBackend(BaseModelBackend):
                 providers=["CUDAExecutionProvider"],
                 provider_options=[provider_options]
             )
+            self._state = ModelState.LOADED
+            logger.info("ONNX model loaded successfully")
             
         except Exception as e:
+            self._state = ModelState.FAILED
             raise RuntimeError(f"Failed to load ONNX model: {e}")
+
+    async def warmup(self) -> None:
+        """Run model warmup.
+        
+        Raises:
+            RuntimeError: If warmup fails
+        """
+        if not self.is_loaded:
+            raise RuntimeError("Cannot warmup - model not loaded")
+            
+        try:
+            # Create dummy inputs for warmup
+            tokens = [1, 2, 3]  # Minimal token sequence
+            tokens_input = np.array([tokens], dtype=np.int64)
+            style_input = np.zeros((1, 256), dtype=np.float32)  # Match expected dims
+            speed_input = np.array([1.0], dtype=np.float32)
+            
+            # Run inference
+            self._session.run(
+                None,
+                {
+                    "tokens": tokens_input,
+                    "style": style_input,
+                    "speed": speed_input
+                }
+            )
+            
+            self._state = ModelState.WARMED_UP
+            logger.info("ONNX model warmup completed")
+            
+        except Exception as e:
+            self._state = ModelState.FAILED
+            raise RuntimeError(f"Model warmup failed: {e}")
 
     def generate(
         self,
@@ -90,8 +126,8 @@ class ONNXGPUBackend(BaseModelBackend):
         Raises:
             RuntimeError: If generation fails
         """
-        if not self.is_loaded:
-            raise RuntimeError("Model not loaded")
+        if not self.is_ready:
+            raise RuntimeError("Model not ready for inference")
 
         try:
             # Prepare inputs
@@ -161,3 +197,10 @@ class ONNXGPUBackend(BaseModelBackend):
                 "do_copy_in_default_stream": self._config.do_copy_in_default_stream
             }
         }
+
+    @property
+    def state(self) -> ModelState:
+        """Get current model state."""
+        if self._session is None:
+            return ModelState.UNINITIALIZED
+        return self._state

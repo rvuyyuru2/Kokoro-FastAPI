@@ -32,39 +32,31 @@ class ModelManager:
         self._initialize_backends()
 
     def _initialize_backends(self) -> None:
-        """Initialize available backends."""
-        # Initialize GPU backends if available
-        if settings.use_gpu and torch.cuda.is_available():
-            try:
-                # PyTorch GPU
-                self._backends['pytorch_gpu'] = PyTorchGPUBackend()
-                self._current_backend = 'pytorch_gpu'
-                logger.info("Initialized PyTorch GPU backend")
-                
-                # ONNX GPU
-                self._backends['onnx_gpu'] = ONNXGPUBackend()
-                logger.info("Initialized ONNX GPU backend")
-            except Exception as e:
-                logger.error(f"Failed to initialize GPU backends: {e}")
-                # Fallback to CPU if GPU fails
-                self._initialize_cpu_backends()
-        else:
-            self._initialize_cpu_backends()
-
-    def _initialize_cpu_backends(self) -> None:
-        """Initialize CPU backends."""
+        """Initialize the selected backend based on settings."""
         try:
-            # PyTorch CPU
-            self._backends['pytorch_cpu'] = PyTorchCPUBackend()
-            self._current_backend = 'pytorch_cpu'
-            logger.info("Initialized PyTorch CPU backend")
-            
-            # ONNX CPU
-            self._backends['onnx_cpu'] = ONNXCPUBackend()
-            logger.info("Initialized ONNX CPU backend")
+            # Determine which single backend to use
+            if settings.use_gpu and torch.cuda.is_available():
+                if settings.use_onnx:
+                    self._backends['onnx_gpu'] = ONNXGPUBackend()
+                    self._current_backend = 'onnx_gpu'
+                    logger.info("Initialized ONNX GPU backend")
+                else:
+                    self._backends['pytorch_gpu'] = PyTorchGPUBackend()
+                    self._current_backend = 'pytorch_gpu'
+                    logger.info("Initialized PyTorch GPU backend")
+            else:
+                if settings.use_onnx:
+                    self._backends['onnx_cpu'] = ONNXCPUBackend()
+                    self._current_backend = 'onnx_cpu'
+                    logger.info("Initialized ONNX CPU backend")
+                else:
+                    self._backends['pytorch_cpu'] = PyTorchCPUBackend()
+                    self._current_backend = 'pytorch_cpu'
+                    logger.info("Initialized PyTorch CPU backend")
+                    
         except Exception as e:
-            logger.error(f"Failed to initialize CPU backends: {e}")
-            raise RuntimeError("No backends available")
+            logger.error(f"Failed to initialize backend: {e}")
+            raise RuntimeError(f"Failed to initialize backend: {e}")
 
     def get_backend(self, backend_type: Optional[str] = None) -> BaseModelBackend:
         """Get specified backend.
@@ -135,16 +127,22 @@ class ModelManager:
             
             backend = self.get_backend(backend_type)
             
-            # Load model and run warmup
+            # Load model
             await backend.load_model(abs_path)
             logger.info(f"Loaded model on {backend_type} backend")
+            
+            # Run backend warmup
+            await backend.warmup()
+            logger.info("Model warmup completed")
+            
+            # Run voice warmup
             await self._warmup_inference(backend)
             
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {e}")
             
     async def _warmup_inference(self, backend: BaseModelBackend) -> None:
-        """Run warmup inference to initialize model."""
+        """Run voice warmup inference to test the model with real inputs."""
         try:
             # Import here to avoid circular imports
             from ..text_processing import process_text
@@ -237,8 +235,8 @@ class ModelManager:
             RuntimeError: If generation fails
         """
         backend = self.get_backend(backend_type)
-        if not backend.is_loaded:
-            raise RuntimeError("Model not loaded")
+        if not backend.is_ready:
+            raise RuntimeError("Model not ready for inference")
 
         try:
             # Load voice
