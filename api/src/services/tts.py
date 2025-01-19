@@ -41,17 +41,19 @@ class TTSService:
             config: Optional service configuration
         """
         try:
+            from ..plugins.hooks import get_plugin_manager
+            
             self._config = config or ServiceConfig()
             self._model_manager = get_manager(self._config.model)
             self._audio_processor = get_audio_processor(self._config.audio)
+            self._plugin_manager = get_plugin_manager()
             logger.info("TTS service initialized")
         except Exception as e:
             logger.error(f"Failed to initialize TTS service: {e}")
             raise RuntimeError(f"Service initialization failed: {e}")
 
-    @hookimpl
-    def pre_process_text(self, text: str) -> str:
-        """Plugin hook for text pre-processing.
+    def _apply_text_preprocessing(self, text: str) -> str:
+        """Apply text pre-processing plugins.
         
         Args:
             text: Raw input text
@@ -59,11 +61,14 @@ class TTSService:
         Returns:
             Pre-processed text
         """
-        return text
+        processed = text
+        for result in self._plugin_manager.hook.pre_process_text(text=processed):
+            if result is not None:
+                processed = result
+        return processed
 
-    @hookimpl
-    def post_process_audio(self, audio: np.ndarray) -> np.ndarray:
-        """Plugin hook for audio post-processing.
+    def _apply_audio_postprocessing(self, audio: np.ndarray) -> np.ndarray:
+        """Apply audio post-processing.
         
         Args:
             audio: Audio samples
@@ -71,6 +76,7 @@ class TTSService:
         Returns:
             Post-processed audio
         """
+        # Skip post-processing here since AudioProcessor will handle it
         return audio
 
     async def generate_audio(
@@ -96,8 +102,8 @@ class TTSService:
             RuntimeError: If generation fails
         """
         try:
-            # Apply pre-processing hook
-            text = self.pre_process_text(text)
+            # Apply pre-processing plugins
+            text = self._apply_text_preprocessing(text)
 
             # Process text
             logger.info("Processing text input")
@@ -132,8 +138,8 @@ class TTSService:
                 else audio_chunks[0]
             )
 
-            # Apply post-processing hook
-            audio = self.post_process_audio(audio)
+            # Apply post-processing plugins
+            audio = self._apply_audio_postprocessing(audio)
 
             # Process audio
             return self._audio_processor.process(
@@ -172,8 +178,8 @@ class TTSService:
             # Track timing
             stream_start = time.time()
 
-            # Apply pre-processing hook
-            text = self.pre_process_text(text)
+            # Apply pre-processing plugins
+            text = self._apply_text_preprocessing(text)
 
             # Process text
             logger.info("Processing text input for streaming")
@@ -208,8 +214,8 @@ class TTSService:
                         speed
                     )
 
-                    # Apply post-processing hook
-                    chunk_audio = self.post_process_audio(chunk_audio)
+                    # Apply post-processing plugins
+                    chunk_audio = self._apply_audio_postprocessing(chunk_audio)
 
                     # Process audio
                     chunk_bytes = self._audio_processor.process(

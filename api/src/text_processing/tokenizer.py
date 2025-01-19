@@ -24,19 +24,19 @@ def tokenize(phonemes: str) -> List[int]:
     Returns:
         List of token IDs
     """
-    logger.debug(f"Input to tokenize: '{phonemes}'")
+    # logger.debug(f"Input to tokenize: '{phonemes}'")
     
     # Apply pre-processing hook
     phonemes = pre_process_tokens(phonemes)
-    logger.debug(f"After pre-process: '{phonemes}'")
+    # logger.debug(f"After pre-process: '{phonemes}'")
 
     # Core tokenization - match reference exactly
     tokens = [i for i in map(VOCAB.get, phonemes) if i is not None]
     
     # Log results
     filtered = ''.join(p for p in phonemes if p in VOCAB)
-    logger.debug(f"Final token sequence from: '{filtered}'")
-    logger.debug(f"Token IDs: {tokens}")
+    # logger.debug(f"Final token sequence from: '{filtered}'")
+    # logger.debug(f"Token IDs: {tokens}")
     
     # Log any filtered characters
     invalid_chars = set(p for p in phonemes if p not in VOCAB)
@@ -48,7 +48,8 @@ def tokenize(phonemes: str) -> List[int]:
     
     # Enforce token limit exactly as reference
     if len(tokens) > 510:
-        logger.warning('Truncating to 510 tokens')
+        logger.error('Truncating to 510 tokens')
+        #TODO raise exception?
         tokens = tokens[:510]
 
     return tokens

@@ -36,16 +36,16 @@ def phonemize(text: str, language: str = "a", normalize: bool = True) -> str:
     Returns:
         Phonemized text
     """
-    logger.debug(f"Input text to phonemize: '{text}'")
+    # logger.debug(f"Input text to phonemize: '{text}'")
     
     # Apply pre-processing hook
     text = pre_process_phonemes(text)
-    logger.debug(f"After pre-process phonemes: '{text}'")
+    # logger.debug(f"After pre-process phonemes: '{text}'")
 
     # Normalize if requested
     if normalize:
         text = normalize_text(text)
-        logger.debug(f"After normalization: '{text}'")
+        # logger.debug(f"After normalization: '{text}'")
 
     # Core phonemization - match reference exactly
     ps = phonemizers[language].phonemize([text])
@@ -61,10 +61,10 @@ def phonemize(text: str, language: str = "a", normalize: bool = True) -> str:
     
     # Filter exactly like reference
     ps = ''.join(filter(lambda p: p in VOCAB, ps))
-    logger.debug(f"After phonemization: '{ps}'")
+    # logger.debug(f"After phonemization: '{ps}'")
 
     # Apply post-processing hook
     ps = post_process_phonemes(ps)
-    logger.debug(f"Final phonemes: '{ps}'")
+    # logger.debug(f"Final phonemes: '{ps}'")
     
     return ps.strip()

@@ -84,23 +84,7 @@ class AudioProcessor:
         try:
             processed = audio
 
-            # Optional padding
-            if add_padding:
-                processed = self._padding.pad(
-                    processed,
-                    pad_start=is_first,
-                    pad_end=is_last
-                )
-
-            # Optional normalization
-            if normalize:
-                processed = self._normalizer.normalize(
-                    processed,
-                    is_first=is_first,
-                    is_last=is_last
-                )
-
-            # Optional effects
+            # Apply effects FIRST so resampling happens before normalization
             if post_process:
                 processed = self._post_processor.process(
                     processed,
@@ -108,11 +92,27 @@ class AudioProcessor:
                     is_last=is_last
                 )
 
-            # Convert format
+            # Then apply padding
+            if add_padding:
+                processed = self._padding.pad(
+                    processed,
+                    pad_start=is_first,
+                    pad_end=is_last
+                )
+
+            # Then normalize the padded, pitch-shifted audio
+            if normalize:
+                processed = self._normalizer.normalize(
+                    processed,
+                    is_first=is_first,
+                    is_last=is_last
+                )
+
+            # Convert format last
             return self._converter.convert(
                 processed,
                 format,
-                normalizer=self._normalizer if normalize else None,
+                normalizer=None,  # Normalization already done above
                 is_first_chunk=is_first,
                 is_last_chunk=is_last,
                 stream=stream

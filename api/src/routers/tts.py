@@ -1,6 +1,6 @@
 """Core TTS endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
@@ -16,16 +16,17 @@ CONTENT_TYPES = {
     "flac": "audio/flac"
 }
 
-# Initialize service
-service = get_service()
-
+async def get_tts_service():
+    """Get TTS service instance."""
+    return get_service()
 
 @router.post("")
 async def text_to_speech(
     text: str,
     voice: str,
     speed: float = 1.0,
-    format: str = "wav"
+    format: str = "wav",
+    service = Depends(get_tts_service)
 ):
     """Generate complete audio file.
     
@@ -34,6 +35,7 @@ async def text_to_speech(
         voice: Voice ID
         speed: Speed multiplier
         format: Output format
+        service: TTS service instance
         
     Returns:
         Audio file
@@ -57,13 +59,13 @@ async def text_to_speech(
         logger.error(f"TTS generation failed: {e}")
         raise HTTPException(status_code=500, detail="TTS generation failed")
 
-
 @router.post("/stream")
 async def stream_tts(
     text: str,
     voice: str,
     speed: float = 1.0,
-    format: str = "wav"
+    format: str = "wav",
+    service = Depends(get_tts_service)
 ):
     """Generate streaming audio.
     
@@ -72,6 +74,7 @@ async def stream_tts(
         voice: Voice ID
         speed: Speed multiplier
         format: Output format
+        service: TTS service instance
         
     Returns:
         Audio stream
@@ -88,13 +91,16 @@ async def stream_tts(
         logger.error(f"TTS streaming failed: {e}")
         raise HTTPException(status_code=500, detail="TTS streaming failed")
 
-
 @router.post("/voices/combine")
-async def combine_voices(voices: list[str]):
+async def combine_voices(
+    voices: list[str],
+    service = Depends(get_tts_service)
+):
     """Combine multiple voices.
     
     Args:
         voices: List of voice IDs
+        service: TTS service instance
         
     Returns:
         Combined voice ID
@@ -107,9 +113,10 @@ async def combine_voices(voices: list[str]):
         logger.error(f"Voice combination failed: {e}")
         raise HTTPException(status_code=500, detail="Voice combination failed")
 
-
 @router.get("/voices")
-async def list_voices():
+async def list_voices(
+    service = Depends(get_tts_service)
+):
     """List available voices.
     
     Returns:

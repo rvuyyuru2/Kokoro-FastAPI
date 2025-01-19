@@ -1,6 +1,6 @@
 """OpenAI-compatible TTS endpoints."""
 
-from typing import AsyncGenerator, List, Union
+from typing import Any, AsyncGenerator, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, Request
 from fastapi.responses import StreamingResponse
@@ -24,21 +24,23 @@ CONTENT_TYPES = {
     "pcm": "audio/pcm"
 }
 
+async def get_tts_service():
+    """Get TTS service instance."""
+    return get_service()
 
-async def process_voices(voice_input: Union[str, List[str]]) -> str:
+async def process_voices(
+    voice_input: Union[str, List[str]],
+    service = Depends(get_tts_service)
+) -> str:
     """Process voice input into a combined voice.
     
     Args:
         voice_input: Voice ID or list of voice IDs
+        service: TTS service instance
         
     Returns:
         Combined voice ID
-        
-    Raises:
-        ValueError: If voices are invalid
     """
-    service = get_service()
-    
     # Convert input to list
     if isinstance(voice_input, str):
         voices = [v.strip() for v in voice_input.split("+") if v.strip()]
@@ -59,29 +61,29 @@ async def process_voices(voice_input: Union[str, List[str]]) -> str:
     # Return single voice or combine
     return voices[0] if len(voices) == 1 else await service.combine_voices(voices)
 
-
 async def stream_audio_chunks(
     request: OpenAISpeechRequest,
-    client_request: Request
+    client_request: Request,
+    service = Depends(get_tts_service)
 ) -> AsyncGenerator[bytes, None]:
     """Stream audio chunks.
     
     Args:
         request: Speech request
         client_request: FastAPI request
+        service: TTS service instance
         
     Yields:
         Audio chunks
     """
-    service = get_service()
-    voice = await process_voices(request.voice)
+    voice = await process_voices(request.voice, service=service)
     
     try:
         async for chunk in service.generate_stream(
             text=request.input,
             voice=voice,
             speed=request.speed,
-            output_format=request.response_format  # Changed from format to output_format
+            output_format=request.response_format
         ):
             # Check for client disconnect
             if await client_request.is_disconnected():
@@ -93,12 +95,12 @@ async def stream_audio_chunks(
         logger.error(f"Streaming error: {e}")
         raise
 
-
 @router.post("/audio/speech")
 async def create_speech(
     request: OpenAISpeechRequest,
     client_request: Request,
-    x_raw_response: str = Header(None, alias="x-raw-response")
+    x_raw_response: str = Header(None, alias="x-raw-response"),
+    service = Depends(get_tts_service)
 ):
     """OpenAI-compatible speech endpoint.
     
@@ -106,13 +108,13 @@ async def create_speech(
         request: Speech request
         client_request: FastAPI request
         x_raw_response: Raw response header
+        service: TTS service instance
         
     Returns:
         Audio response
     """
     try:
-        service = get_service()
-        voice = await process_voices(request.voice)
+        voice = await process_voices(request.voice, service=service)
         content_type = CONTENT_TYPES.get(
             request.response_format,
             f"audio/{request.response_format}"
@@ -120,8 +122,13 @@ async def create_speech(
 
         # Stream or complete file
         if request.stream:
+            # Create generator with service instance
+            async def stream_generator():
+                async for chunk in stream_audio_chunks(request, client_request, service):
+                    yield chunk
+
             return StreamingResponse(
-                stream_audio_chunks(request, client_request),
+                stream_generator(),
                 media_type=content_type,
                 headers={
                     "Content-Disposition": f"attachment; filename=speech.{request.response_format}",
@@ -135,7 +142,7 @@ async def create_speech(
                 text=request.input,
                 voice=voice,
                 speed=request.speed,
-                output_format=request.response_format  # Changed from format to output_format
+                output_format=request.response_format
             )
             
             return Response(
@@ -159,36 +166,38 @@ async def create_speech(
             detail={"error": "Server error", "message": str(e)}
         )
 
-
 @router.get("/voices")
-async def list_voices():
+async def list_voices(
+    service = Depends(get_tts_service)
+):
     """List available voices.
     
     Returns:
         List of voice IDs
     """
     try:
-        service = get_service()
         voices = await service.list_voices()
         return {"voices": voices}
     except Exception as e:
         logger.error(f"Failed to list voices: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.post("/voices/combine")
-async def combine_voices(request: Union[str, List[str]]):
+async def combine_voices(
+    request: Union[str, List[str]],
+    service = Depends(get_tts_service)
+):
     """Combine multiple voices.
     
     Args:
         request: Voice IDs to combine
+        service: TTS service instance
         
     Returns:
         Combined voice info
     """
     try:
-        service = get_service()
-        combined_voice = await process_voices(request)
+        combined_voice = await process_voices(request, service=service)
         voices = await service.list_voices()
         return {
             "voices": voices,

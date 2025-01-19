@@ -82,18 +82,11 @@ class AudioPostProcessor:
         Args:
             config: Optional effect configuration
         """
+        from ..plugins.hooks import get_plugin_manager
+        
         self._config = config or EffectConfig()
         self._fade = FadeEffect(self._config)
-
-    @hookimpl
-    def pre_process_audio(self, audio: np.ndarray) -> np.ndarray:
-        """Plugin hook for audio pre-processing."""
-        return audio
-
-    @hookimpl
-    def post_process_audio(self, audio: np.ndarray) -> np.ndarray:
-        """Plugin hook for audio post-processing."""
-        return audio
+        self._plugin_manager = get_plugin_manager()
 
     def process(self, audio: np.ndarray, is_first: bool = True, is_last: bool = True) -> np.ndarray:
         """Apply post-processing effects."""
@@ -101,9 +94,26 @@ class AudioPostProcessor:
             raise ValueError("Input must be numpy array")
 
         try:
-            processed = self.pre_process_audio(audio)
+            processed = audio
+
+            # Apply fade effect first
             processed = self._fade.process(processed, is_first, is_last)
-            return self.post_process_audio(processed)
+
+            # Run pre-processing plugins
+            for result in self._plugin_manager.hook.pre_process_audio(audio=processed):
+                if result is not None:
+                    processed = result
+
+            # Run post-processing plugins LAST to ensure effects aren't neutralized
+            logger.info("AudioPostProcessor: Running post-processing plugins...")
+            plugin_results = self._plugin_manager.hook.post_process_audio(audio=processed)
+            for result in plugin_results:
+                if result is not None:
+                    processed = result
+                    logger.info("AudioPostProcessor: Plugin processing applied")
+            logger.info("AudioPostProcessor: Post-processing complete")
+
+            return processed
         except Exception as e:
             logger.error(f"Audio post-processing failed: {e}")
             raise

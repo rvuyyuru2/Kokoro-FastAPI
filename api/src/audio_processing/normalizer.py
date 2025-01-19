@@ -27,7 +27,7 @@ class AudioNormalizer:
         if len(audio) == 0:
             raise ValueError("Audio data cannot be empty")
             
-        logger.debug(f"Input range: [{audio.min():.3f}, {audio.max():.3f}]")
+        # logger.debug(f"Input range: [{audio.min():.3f}, {audio.max():.3f}]")
             
         # Trim for non-final chunks
         if not is_last and len(audio) > self.samples_to_trim:

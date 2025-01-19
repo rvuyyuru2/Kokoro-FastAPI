@@ -7,7 +7,6 @@ import numpy as np
 import soundfile as sf
 from loguru import logger
 
-from ..plugins import hookimpl
 from ..structures.audio_schemas import FormatConfig
 from .normalizer import AudioNormalizer
 
@@ -25,30 +24,6 @@ class AudioConverter:
         """
         self._config = config or FormatConfig()
         self._sample_rate = 24000  # Fixed sample rate for TTS
-
-    @hookimpl
-    def pre_process_audio(self, audio: np.ndarray) -> np.ndarray:
-        """Plugin hook for audio pre-processing.
-        
-        Args:
-            audio: Audio samples
-            
-        Returns:
-            Pre-processed audio
-        """
-        return audio
-
-    @hookimpl
-    def post_process_audio(self, audio: np.ndarray) -> np.ndarray:
-        """Plugin hook for audio post-processing.
-        
-        Args:
-            audio: Audio samples
-            
-        Returns:
-            Post-processed audio
-        """
-        return audio
 
     def convert(
         self,
@@ -83,9 +58,6 @@ class AudioConverter:
             )
 
         try:
-            # Apply pre-processing
-            audio = self.pre_process_audio(audio)
-
             # Normalize if needed
             if normalizer is not None:
                 audio = normalizer.normalize(
@@ -96,19 +68,14 @@ class AudioConverter:
 
             # Convert format
             if stream:
-                result = self._convert_stream(
+                return self._convert_stream(
                     audio,
                     format,
                     is_first_chunk,
                     is_last_chunk
                 )
             else:
-                result = self._convert_complete(audio, format)
-
-            # Apply post-processing
-            result = self.post_process_audio(result)
-
-            return result
+                return self._convert_complete(audio, format)
 
         except Exception as e:
             logger.error(f"Audio conversion failed: {e}")

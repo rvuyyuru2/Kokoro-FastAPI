@@ -18,6 +18,14 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for service initialization."""
     logger.info("Initializing TTS service...")
 
+    # Initialize plugin manager first
+    from .plugins.hooks import initialize_plugin_manager, get_plugin_manager
+    try:
+        plugin_manager = get_plugin_manager()
+    except RuntimeError:
+        plugin_manager = initialize_plugin_manager()
+    logger.info("Plugin manager initialized")
+
     # Initialize service
     service = get_service()
     model_manager = service._model_manager
