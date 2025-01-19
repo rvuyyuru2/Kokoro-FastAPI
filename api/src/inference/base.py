@@ -48,11 +48,12 @@ class ModelBackend(ABC):
         pass
 
     @abstractmethod
-    def generate(
+    async def generate(
         self,
         tokens: List[int],
         voice: torch.Tensor,
-        speed: float = 1.0
+        speed: float = 1.0,
+        stream: Optional[torch.cuda.Stream] = None
     ) -> np.ndarray:
         """Generate audio from tokens.
         
@@ -60,6 +61,7 @@ class ModelBackend(ABC):
             tokens: Input token IDs
             voice: Voice embedding tensor
             speed: Speed multiplier
+            stream: Optional CUDA stream for GPU inference
             
         Returns:
             Generated audio samples

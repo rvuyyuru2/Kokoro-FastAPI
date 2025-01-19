@@ -4,16 +4,18 @@ import os
 from typing import Dict, Optional, Union
 
 import torch
+import numpy as np
 from loguru import logger
 
 from .base import BaseModelBackend
 from .onnx_cpu import ONNXCPUBackend
 from .onnx_gpu import ONNXGPUBackend
 from .pytorch_cpu import PyTorchCPUBackend
-from .pytorch_gpu import PyTorchGPUBackend
+from .pytorch_gpu import PyTorchGPUBackend, PyTorchGPUConfig
 from ..core import paths
 from ..core.config import settings
 from ..structures.model_schemas import ModelConfig
+from ..text_processing import process_text
 
 
 class ModelManager:
@@ -41,7 +43,9 @@ class ModelManager:
                     self._current_backend = 'onnx_gpu'
                     logger.info("Initialized ONNX GPU backend")
                 else:
-                    self._backends['pytorch_gpu'] = PyTorchGPUBackend()
+                    self._backends['pytorch_gpu'] = PyTorchGPUBackend(
+                        config=PyTorchGPUConfig()
+                    )
                     self._current_backend = 'pytorch_gpu'
                     logger.info("Initialized PyTorch GPU backend")
             else:
@@ -144,25 +148,22 @@ class ModelManager:
     async def _warmup_inference(self, backend: BaseModelBackend) -> None:
         """Run voice warmup inference to test the model with real inputs."""
         try:
-            # Import here to avoid circular imports
-            from ..text_processing import process_text
-            
             # Load a real voice for warmup
             voice_path = await paths.get_voice_path("af")  # Use default voice
             voice = await paths.load_voice_tensor(voice_path, device=backend.device)
             logger.info("Loaded voice for warmup")
             
-            # Use real text
+            # Use real text and process through pipeline
             text = "Testing text to speech synthesis."
             logger.info(f"Running warmup inference with voice: af")
             
-            # Process through pipeline
-            sequences = process_text(text)
+            # Process through text pipeline
+            sequences = await process_text(text)
             if not sequences:
                 raise ValueError("Text processing failed")
             
             # Run inference
-            backend.generate(sequences[0], voice, speed=1.0)
+            await backend.generate(sequences[0], voice, speed=1.0)
             
         except Exception as e:
             logger.warning(f"Warmup inference failed: {e}")
@@ -218,8 +219,9 @@ class ModelManager:
         tokens: list[int],
         voice_path: str,
         speed: float = 1.0,
-        backend_type: Optional[str] = None
-    ) -> torch.Tensor:
+        backend_type: Optional[str] = None,
+        stream: Optional[torch.cuda.Stream] = None
+    ) -> np.ndarray:
         """Generate audio using specified backend.
         
         Args:
@@ -227,6 +229,7 @@ class ModelManager:
             voice_path: Path to voice file
             speed: Speed multiplier
             backend_type: Backend to use, uses default if None
+            stream: Optional CUDA stream for GPU inference
             
         Returns:
             Generated audio tensor
@@ -243,7 +246,7 @@ class ModelManager:
             voice = await self.load_voice(voice_path, backend_type)
             
             # Generate audio
-            return backend.generate(tokens, voice, speed)
+            return await backend.generate(tokens, voice, speed, stream)
             
         except Exception as e:
             raise RuntimeError(f"Generation failed: {e}")
@@ -272,18 +275,6 @@ class ModelManager:
             Backend name
         """
         return self._current_backend
-
-    @property
-    def voice_cache_info(self) -> Dict[str, int]:
-        """Get voice cache statistics.
-        
-        Returns:
-            Dictionary with cache info
-        """
-        return {
-            'size': len(self._voice_cache),
-            'max_size': self._config.voice_cache_size
-        }
 
 
 # Module-level instance

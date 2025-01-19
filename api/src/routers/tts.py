@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
-from ..services import get_service
-
+from ..core import paths
+from ..utils.voice import combine_voices as combine_voice_tensors
+from ..pipeline import get_factory
 router = APIRouter(prefix="/tts", tags=["tts"])
 
 # Content type mapping
@@ -16,9 +17,9 @@ CONTENT_TYPES = {
     "flac": "audio/flac"
 }
 
-async def get_tts_service():
-    """Get TTS service instance."""
-    return get_service()
+async def get_pipeline_factory():
+    """Get pipeline factory instance."""
+    return await get_factory()
 
 @router.post("")
 async def text_to_speech(
@@ -26,7 +27,7 @@ async def text_to_speech(
     voice: str,
     speed: float = 1.0,
     format: str = "wav",
-    service = Depends(get_tts_service)
+    factory = Depends(get_pipeline_factory)
 ):
     """Generate complete audio file.
     
@@ -35,17 +36,22 @@ async def text_to_speech(
         voice: Voice ID
         speed: Speed multiplier
         format: Output format
-        service: TTS service instance
+        factory: Pipeline factory instance
         
     Returns:
         Audio file
     """
     try:
-        audio_data = await service.generate_audio(
-            text,
-            voice,
-            speed,
-            format
+        # Create whole file pipeline
+        pipeline = await factory.create_pipeline("whole_file")
+        
+        # Generate audio
+        audio_data = await pipeline.process(
+            text=text,
+            voice=voice,
+            speed=speed,
+            format=format,
+            stream=False
         )
         
         return StreamingResponse(
@@ -65,7 +71,7 @@ async def stream_tts(
     voice: str,
     speed: float = 1.0,
     format: str = "wav",
-    service = Depends(get_tts_service)
+    factory = Depends(get_pipeline_factory)
 ):
     """Generate streaming audio.
     
@@ -74,14 +80,27 @@ async def stream_tts(
         voice: Voice ID
         speed: Speed multiplier
         format: Output format
-        service: TTS service instance
+        factory: Pipeline factory instance
         
     Returns:
         Audio stream
     """
     try:
+        # Create streaming pipeline
+        pipeline = await factory.create_pipeline("streaming")
+        
+        async def stream_generator():
+            async for chunk in pipeline.process(
+                text=text,
+                voice=voice,
+                speed=speed,
+                format=format,
+                stream=True
+            ):
+                yield chunk
+
         return StreamingResponse(
-            service.generate_stream(text, voice, speed, format),
+            stream_generator(),
             media_type=CONTENT_TYPES.get(format, "application/octet-stream")
         )
         
@@ -92,21 +111,17 @@ async def stream_tts(
         raise HTTPException(status_code=500, detail="TTS streaming failed")
 
 @router.post("/voices/combine")
-async def combine_voices(
-    voices: list[str],
-    service = Depends(get_tts_service)
-):
+async def combine_voices(voices: list[str]):
     """Combine multiple voices.
     
     Args:
         voices: List of voice IDs
-        service: TTS service instance
         
     Returns:
         Combined voice ID
     """
     try:
-        return await service.combine_voices(voices)
+        return await combine_voice_tensors(voices)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -114,16 +129,14 @@ async def combine_voices(
         raise HTTPException(status_code=500, detail="Voice combination failed")
 
 @router.get("/voices")
-async def list_voices(
-    service = Depends(get_tts_service)
-):
+async def list_voices():
     """List available voices.
     
     Returns:
         List of voice IDs
     """
     try:
-        return await service.list_voices()
+        return await paths.list_voices()
     except Exception as e:
         logger.error(f"Failed to list voices: {e}")
         raise HTTPException(status_code=500, detail="Failed to list voices")

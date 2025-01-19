@@ -1,6 +1,8 @@
 """GPU-based ONNX inference backend."""
 
-from typing import Dict, Optional
+import gc
+import asyncio
+from typing import Dict, Optional, List
 
 import numpy as np
 import torch
@@ -9,7 +11,8 @@ from onnxruntime import (
     ExecutionMode,
     GraphOptimizationLevel,
     InferenceSession,
-    SessionOptions
+    SessionOptions,
+    get_available_providers
 )
 
 from ..core import paths
@@ -21,25 +24,25 @@ from .base import BaseModelBackend, ModelState
 class ONNXGPUBackend(BaseModelBackend):
     """ONNX-based GPU inference backend."""
 
-    def __init__(self):
+    def __init__(self, config: Optional[ONNXGPUConfig] = None):
         """Initialize GPU backend."""
         super().__init__()
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA not available")
+        if "CUDAExecutionProvider" not in get_available_providers():
+            raise RuntimeError("CUDA provider not available for ONNX")
+            
         self._device = "cuda"
         self._session: Optional[InferenceSession] = None
-        self._config = ONNXGPUConfig(
-            optimization_level=settings.onnx_optimization_level,
-            num_threads=settings.onnx_num_threads,
-            inter_op_threads=settings.onnx_inter_op_threads,
-            execution_mode=settings.onnx_execution_mode,
-            memory_pattern=settings.onnx_memory_pattern,
-            arena_extend_strategy=settings.onnx_arena_extend_strategy,
-            device_id=0,
-            gpu_mem_limit=0.7,
-            cudnn_conv_algo_search="EXHAUSTIVE",
-            do_copy_in_default_stream=True
-        )
+        self._config = config or ONNXGPUConfig()
+        self._state = ModelState.UNINITIALIZED
+        
+        # Initialize CUDA streams
+        self._streams = [
+            torch.cuda.Stream()
+            for _ in range(self._config.num_streams)
+        ]
+        self._current_stream = 0
 
     async def load_model(self, path: str) -> None:
         """Load ONNX model.
@@ -54,19 +57,20 @@ class ONNXGPUBackend(BaseModelBackend):
             # Get verified model path
             model_path = await paths.get_model_path(path)
             
-            logger.info(f"Loading ONNX model on GPU: {model_path}")
+            logger.info(f"Loading ONNX model: {model_path}")
             
             # Configure session
             options = self._create_session_options()
             provider_options = self._create_provider_options()
             
-            # Create session with CUDA provider
+            # Create session
             self._session = InferenceSession(
                 model_path,
                 sess_options=options,
                 providers=["CUDAExecutionProvider"],
                 provider_options=[provider_options]
             )
+            
             self._state = ModelState.LOADED
             logger.info("ONNX model loaded successfully")
             
@@ -74,44 +78,12 @@ class ONNXGPUBackend(BaseModelBackend):
             self._state = ModelState.FAILED
             raise RuntimeError(f"Failed to load ONNX model: {e}")
 
-    async def warmup(self) -> None:
-        """Run model warmup.
-        
-        Raises:
-            RuntimeError: If warmup fails
-        """
-        if not self.is_loaded:
-            raise RuntimeError("Cannot warmup - model not loaded")
-            
-        try:
-            # Create dummy inputs for warmup
-            tokens = [1, 2, 3]  # Minimal token sequence
-            tokens_input = np.array([tokens], dtype=np.int64)
-            style_input = np.zeros((1, 256), dtype=np.float32)  # Match expected dims
-            speed_input = np.array([1.0], dtype=np.float32)
-            
-            # Run inference
-            self._session.run(
-                None,
-                {
-                    "tokens": tokens_input,
-                    "style": style_input,
-                    "speed": speed_input
-                }
-            )
-            
-            self._state = ModelState.WARMED_UP
-            logger.info("ONNX model warmup completed")
-            
-        except Exception as e:
-            self._state = ModelState.FAILED
-            raise RuntimeError(f"Model warmup failed: {e}")
-
-    def generate(
+    async def generate(
         self,
-        tokens: list[int],
+        tokens: List[int],
         voice: torch.Tensor,
-        speed: float = 1.0
+        speed: float = 1.0,
+        stream: Optional[torch.cuda.Stream] = None
     ) -> np.ndarray:
         """Generate audio using ONNX model.
         
@@ -119,6 +91,7 @@ class ONNXGPUBackend(BaseModelBackend):
             tokens: Input token IDs
             voice: Voice embedding tensor
             speed: Speed multiplier
+            stream: Optional CUDA stream for parallel execution
             
         Returns:
             Generated audio samples
@@ -130,22 +103,36 @@ class ONNXGPUBackend(BaseModelBackend):
             raise RuntimeError("Model not ready for inference")
 
         try:
-            # Prepare inputs
-            tokens_input = np.array([tokens], dtype=np.int64)
-            style_input = voice[len(tokens)].cpu().numpy()  # Move to CPU for ONNX
-            speed_input = np.full(1, speed, dtype=np.float32)
+            # Check memory and cleanup if needed
+            if self._check_memory():
+                self._clear_memory()
 
-            # Run inference
-            result = self._session.run(
-                None,
-                {
-                    "tokens": tokens_input,
-                    "style": style_input,
-                    "speed": speed_input
-                }
-            )
-            
-            return result[0]
+            # Use provided stream or get next stream from pool
+            stream_to_use = stream or self._streams[self._current_stream]
+            self._current_stream = (self._current_stream + 1) % len(self._streams)
+
+            with torch.cuda.stream(stream_to_use):
+                # Prepare inputs
+                tokens_input = np.array([tokens], dtype=np.int64)
+                style_input = voice[len(tokens)].cpu().numpy()  # Move to CPU for ONNX
+                speed_input = np.full(1, speed, dtype=np.float32)
+
+                # Run inference in executor to avoid blocking
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    self._session.run,
+                    None,
+                    {
+                        "tokens": tokens_input,
+                        "style": style_input,
+                        "speed": speed_input
+                    }
+                )
+
+                # Ensure stream sync
+                stream_to_use.synchronize()
+                return result[0]
             
         except Exception as e:
             raise RuntimeError(f"Generation failed: {e}")
@@ -190,13 +177,51 @@ class ONNXGPUBackend(BaseModelBackend):
         """
         return {
             "CUDAExecutionProvider": {
-                "device_id": self._config.device_id,
                 "arena_extend_strategy": self._config.arena_extend_strategy,
-                "gpu_mem_limit": int(self._config.gpu_mem_limit * torch.cuda.get_device_properties(0).total_memory),
-                "cudnn_conv_algo_search": self._config.cudnn_conv_algo_search,
-                "do_copy_in_default_stream": self._config.do_copy_in_default_stream
+                "gpu_mem_limit": int(self._config.memory_threshold * 1024 * 1024 * 1024),  # Convert GB to bytes
+                "cudnn_conv_algo_search": "EXHAUSTIVE",
+                "do_copy_in_default_stream": True
             }
         }
+
+    def _check_memory(self) -> bool:
+        """Check if memory usage is above threshold."""
+        if torch.cuda.is_available():
+            memory_gb = torch.cuda.memory_allocated() / 1e9
+            return memory_gb > self._config.memory_threshold
+        return False
+
+    def _clear_memory(self) -> None:
+        """Clear GPU memory."""
+        if torch.cuda.is_available():
+            # Wait for all streams to complete
+            for stream in self._streams:
+                stream.synchronize()
+            torch.cuda.empty_cache()
+            gc.collect()
+        
+    def _cleanup_resources(self) -> None:
+        """Clean up ONNX resources."""
+        if self._session is not None:
+            # Wait for all streams to complete
+            for stream in self._streams:
+                stream.synchronize()
+            del self._session
+            self._session = None
+        super()._cleanup_resources()
+
+    async def warmup(self) -> None:
+        """Run model warmup.
+        
+        Raises:
+            RuntimeError: If warmup fails
+        """
+        if not self.is_loaded:
+            raise RuntimeError("Cannot warmup - model not loaded")
+            
+        # Model warmup is handled by model manager
+        self._state = ModelState.WARMED_UP
+        logger.info("ONNX model warmup completed")
 
     @property
     def state(self) -> ModelState:

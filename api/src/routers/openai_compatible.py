@@ -6,8 +6,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
-from ..services import get_service
+from ..core import paths
+from ..pipeline import get_factory
 from ..structures.schemas import OpenAISpeechRequest
+from ..utils.voice import combine_voices as combine_voice_tensors
 
 router = APIRouter(
     prefix="/v1",  # Changed to /v1 for OpenAI compatibility
@@ -24,19 +26,34 @@ CONTENT_TYPES = {
     "pcm": "audio/pcm"
 }
 
-async def get_tts_service():
-    """Get TTS service instance."""
-    return get_service()
+async def get_pipeline_factory():
+    """Get pipeline factory instance."""
+    return await get_factory()
 
-async def process_voices(
-    voice_input: Union[str, List[str]],
-    service = Depends(get_tts_service)
-) -> str:
+async def validate_voice(voice: str) -> str:
+    """Validate voice exists.
+    
+    Args:
+        voice: Voice ID
+        
+    Returns:
+        Validated voice ID
+        
+    Raises:
+        ValueError: If voice not found
+    """
+    available_voices = await paths.list_voices()
+    if voice not in available_voices:
+        raise ValueError(
+            f"Voice '{voice}' not found. Available: {', '.join(sorted(available_voices))}"
+        )
+    return voice
+
+async def process_voices(voice_input: Union[str, List[str]]) -> str:
     """Process voice input into a combined voice.
     
     Args:
         voice_input: Voice ID or list of voice IDs
-        service: TTS service instance
         
     Returns:
         Combined voice ID
@@ -50,57 +67,19 @@ async def process_voices(
     if not voices:
         raise ValueError("No voices provided")
 
-    # Check if voices exist
-    available_voices = await service.list_voices()
+    # Validate all voices
     for voice in voices:
-        if voice not in available_voices:
-            raise ValueError(
-                f"Voice '{voice}' not found. Available: {', '.join(sorted(available_voices))}"
-            )
+        await validate_voice(voice)
 
     # Return single voice or combine
-    return voices[0] if len(voices) == 1 else await service.combine_voices(voices)
-
-async def stream_audio_chunks(
-    request: OpenAISpeechRequest,
-    client_request: Request,
-    service = Depends(get_tts_service)
-) -> AsyncGenerator[bytes, None]:
-    """Stream audio chunks.
-    
-    Args:
-        request: Speech request
-        client_request: FastAPI request
-        service: TTS service instance
-        
-    Yields:
-        Audio chunks
-    """
-    voice = await process_voices(request.voice, service=service)
-    
-    try:
-        async for chunk in service.generate_stream(
-            text=request.input,
-            voice=voice,
-            speed=request.speed,
-            output_format=request.response_format
-        ):
-            # Check for client disconnect
-            if await client_request.is_disconnected():
-                logger.info("Client disconnected")
-                break
-            yield chunk
-            
-    except Exception as e:
-        logger.error(f"Streaming error: {e}")
-        raise
+    return voices[0] if len(voices) == 1 else await combine_voice_tensors(voices)
 
 @router.post("/audio/speech")
 async def create_speech(
     request: OpenAISpeechRequest,
     client_request: Request,
     x_raw_response: str = Header(None, alias="x-raw-response"),
-    service = Depends(get_tts_service)
+    factory = Depends(get_pipeline_factory)
 ):
     """OpenAI-compatible speech endpoint.
     
@@ -108,23 +87,37 @@ async def create_speech(
         request: Speech request
         client_request: FastAPI request
         x_raw_response: Raw response header
-        service: TTS service instance
+        factory: Pipeline factory instance
         
     Returns:
         Audio response
     """
     try:
-        voice = await process_voices(request.voice, service=service)
+        voice = await process_voices(request.voice)
         content_type = CONTENT_TYPES.get(
             request.response_format,
             f"audio/{request.response_format}"
         )
 
-        # Stream or complete file
+        # Create appropriate pipeline
+        pipeline = await factory.create_pipeline(
+            "streaming" if request.stream else "whole_file"
+        )
+
         if request.stream:
-            # Create generator with service instance
+            # Create streaming response
             async def stream_generator():
-                async for chunk in stream_audio_chunks(request, client_request, service):
+                # Don't await the process call - it returns an async generator
+                async for chunk in pipeline.process(
+                    text=request.input,
+                    voice=voice,
+                    speed=request.speed,
+                    format=request.response_format,
+                    stream=True
+                ):
+                    if await client_request.is_disconnected():
+                        logger.info("Client disconnected")
+                        break
                     yield chunk
 
             return StreamingResponse(
@@ -138,11 +131,13 @@ async def create_speech(
                 }
             )
         else:
-            audio_data = await service.generate_audio(
+            # Generate complete file
+            audio_data = await pipeline.process(
                 text=request.input,
                 voice=voice,
                 speed=request.speed,
-                output_format=request.response_format
+                format=request.response_format,
+                stream=False
             )
             
             return Response(
@@ -167,38 +162,32 @@ async def create_speech(
         )
 
 @router.get("/voices")
-async def list_voices(
-    service = Depends(get_tts_service)
-):
+async def list_voices():
     """List available voices.
     
     Returns:
         List of voice IDs
     """
     try:
-        voices = await service.list_voices()
+        voices = await paths.list_voices()
         return {"voices": voices}
     except Exception as e:
         logger.error(f"Failed to list voices: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/voices/combine")
-async def combine_voices(
-    request: Union[str, List[str]],
-    service = Depends(get_tts_service)
-):
+async def combine_voices_endpoint(request: Union[str, List[str]]):
     """Combine multiple voices.
     
     Args:
         request: Voice IDs to combine
-        service: TTS service instance
         
     Returns:
         Combined voice info
     """
     try:
-        combined_voice = await process_voices(request, service=service)
-        voices = await service.list_voices()
+        combined_voice = await process_voices(request)
+        voices = await paths.list_voices()
         return {
             "voices": voices,
             "voice": combined_voice

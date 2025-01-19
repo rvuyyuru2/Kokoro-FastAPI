@@ -1,93 +1,66 @@
-"""Streaming strategy for TTS pipeline."""
+"""Streaming pipeline implementation."""
 
-from typing import Iterator, Optional
+from typing import AsyncIterator, List, Union
 
 import numpy as np
 from loguru import logger
 
-from ..audio_processing import (
-    AudioConfig,
-    AudioProcessor,
-    get_processor as get_audio_processor
-)
-from ..inference import ModelManager, get_manager
+from .base import BasePipeline
 from ..text_processing import process_text
-from .base import GenerationStrategy, Pipeline
 
 
-class StreamingStrategy(GenerationStrategy):
-    """Strategy for streaming audio generation."""
+class StreamingPipeline(BasePipeline):
+    """Streaming pipeline implementation."""
 
-    def __init__(
+    async def process(
         self,
-        model_manager: Optional[ModelManager] = None,
-        audio_processor: Optional[AudioProcessor] = None
-    ):
-        """Initialize strategy.
-        
-        Args:
-            model_manager: Optional model manager
-            audio_processor: Optional audio processor
-        """
-        self._model_manager = model_manager or get_manager()
-        self._audio_processor = audio_processor or get_audio_processor()
-
-    def generate(
-        self,
-        pipeline: Pipeline,
         text: str,
         voice: str,
         speed: float = 1.0,
-        format: str = "wav"
-    ) -> Iterator[bytes]:
-        """Generate audio in streaming chunks.
+        format: str = "wav",
+        stream: bool = False
+    ) -> AsyncIterator[bytes]:
+        """Process text to speech with streaming.
         
         Args:
-            pipeline: TTS pipeline
             text: Input text
             voice: Voice ID
             speed: Speed multiplier
             format: Output format
+            stream: Whether to stream output (ignored, always streams)
             
         Returns:
-            Iterator yielding audio chunks
-        
-        Yields:
-            bytes: Audio chunks in specified format
-            
-        Raises:
-            ValueError: If inputs are invalid
-            RuntimeError: If generation fails
+            Audio chunk iterator
         """
+        # Get voice path
+        voice_path = await self.get_voice_path(voice)
+        if not voice_path:
+            raise ValueError(f"Voice not found: {voice}")
+
         try:
-            # Input validation
-            if not text:
-                raise ValueError("Empty input text")
-            if not voice:
-                raise ValueError("No voice specified")
+            # Preprocess text
+            processed_text = self._apply_text_preprocessing(text)
 
             # Process text into token sequences
-            token_sequences = process_text(text)
+            token_sequences = await process_text(processed_text)
             if not token_sequences:
-                raise ValueError("No valid text chunks")
+                raise ValueError("Text processing failed to generate tokens")
 
-            # Get voice path
-            voice_path = pipeline.get_voice_path(voice)
-            if not voice_path:
-                raise ValueError(f"Voice not found: {voice}")
-
-            # Generate chunks
+            # Stream chunks
             is_first = True
             total_chunks = len(token_sequences)
 
             for i, tokens in enumerate(token_sequences):
                 try:
                     # Generate audio
-                    chunk_audio = self._model_manager.generate(
+                    chunk_audio = await self._model_manager.generate(
                         tokens,
                         voice_path,
                         speed
                     )
+
+                    # Apply post-processing
+                    chunk_audio = self._apply_audio_postprocessing(chunk_audio)
 
                     # Process audio
                     chunk_bytes = self._audio_processor.process(
@@ -96,8 +69,8 @@ class StreamingStrategy(GenerationStrategy):
                         add_padding=True,
                         normalize=True,
                         post_process=True,
-                        is_first_chunk=is_first,
-                        is_last_chunk=(i == total_chunks - 1),
+                        is_first=is_first,
+                        is_last=(i == total_chunks - 1),
                         stream=True
                     )
 
@@ -106,37 +79,7 @@ class StreamingStrategy(GenerationStrategy):
 
                 except Exception as e:
                     logger.error(f"Chunk generation failed: {e}")
-                    continue
+                    yield b""  # Return empty chunk on error
 
-        except Exception as e:
-            logger.error(f"Error in streaming generation: {str(e)}")
-            raise
-
-    def _process_chunk(
-        self,
-        chunk_audio: np.ndarray,
-        format: str,
-        is_first: bool,
-        is_last: bool
-    ) -> bytes:
-        """Process audio chunk.
-        
-        Args:
-            chunk_audio: Audio samples
-            format: Output format
-            is_first: Whether this is first chunk
-            is_last: Whether this is last chunk
-            
-        Returns:
-            Processed audio bytes
-        """
-        return self._audio_processor.process(
-            chunk_audio,
-            format=format,
-            add_padding=True,
-            normalize=True,
-            post_process=True,
-            is_first_chunk=is_first,
-            is_last_chunk=is_last,
-            stream=True
-        )
+        finally:
+            await self.cleanup_voice(voice_path)

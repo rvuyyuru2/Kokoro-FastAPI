@@ -1,99 +1,67 @@
 """TTS pipeline module."""
 
-from typing import Union
+from typing import AsyncIterator, Optional, Union, Any
 
-from .base import (
-    GenerationStrategy,
-    Pipeline,
-    StrategyPipeline,
-    create_pipeline
-)
-from .streaming import StreamingStrategy
-from .whole_file import WholeFileStrategy
+from .base import Pipeline
+from .factory import PipelineFactory, get_factory, PipelineConfig
+from .streaming import StreamingPipeline
+from .whole_file import WholeFilePipeline
+from ..inference import ModelManager
+from ..audio_processing import AudioProcessor
 
 
-def create_streaming_pipeline(
-    voices_dir: str = "voices"
+def create_pipeline(
+    strategy: str = "whole_file",
+    model_manager: Optional[ModelManager] = None,
+    audio_processor: Optional[AudioProcessor] = None,
+    voices_dir: str = "voices",
+    plugin_manager: Optional[Any] = None
 ) -> Pipeline:
-    """Create streaming pipeline.
+    """Create pipeline instance.
     
     Args:
+        strategy: Pipeline type ("whole_file" or "streaming")
+        model_manager: Optional model manager
+        audio_processor: Optional audio processor
         voices_dir: Voice directory path
+        plugin_manager: Optional plugin manager
         
     Returns:
         Pipeline instance
-    """
-    return create_pipeline(
-        strategy="streaming",
-        voices_dir=voices_dir
-    )
-
-
-def create_whole_file_pipeline(
-    voices_dir: str = "voices"
-) -> Pipeline:
-    """Create whole file pipeline.
-    
-    Args:
-        voices_dir: Voice directory path
-        
-    Returns:
-        Pipeline instance
-    """
-    return create_pipeline(
-        strategy="whole_file",
-        voices_dir=voices_dir
-    )
-
-
-def process_text(
-    text: str,
-    voice: str,
-    speed: float = 1.0,
-    format: str = "wav",
-    stream: bool = False,
-    voices_dir: str = "voices"
-) -> Union[bytes, bytes]:
-    """Process text to speech.
-    
-    Args:
-        text: Input text
-        voice: Voice ID
-        speed: Speed multiplier
-        format: Output format
-        stream: Whether to stream output
-        voices_dir: Voice directory path
-        
-    Returns:
-        Audio data or chunks
         
     Raises:
-        ValueError: If inputs are invalid
-        RuntimeError: If processing fails
+        ValueError: If strategy is invalid
     """
-    pipeline = (
-        create_streaming_pipeline(voices_dir)
-        if stream else
-        create_whole_file_pipeline(voices_dir)
+    pipelines = {
+        "whole_file": WholeFilePipeline,
+        "streaming": StreamingPipeline
+    }
+
+    if strategy not in pipelines:
+        raise ValueError(
+            f"Invalid strategy: {strategy}. "
+            f"Must be one of: {', '.join(pipelines.keys())}"
+        )
+
+    return pipelines[strategy](
+        model_manager=model_manager,
+        audio_processor=audio_processor,
+        voices_dir=voices_dir,
+        plugin_manager=plugin_manager
     )
-    return pipeline.process(text, voice, speed, format)
 
 
 __all__ = [
-    # Base classes
-    "GenerationStrategy",
+    # Core types
     "Pipeline",
-    "StrategyPipeline",
+    "PipelineConfig",
     
-    # Strategies
-    "StreamingStrategy",
-    "WholeFileStrategy",
+    # Pipeline implementations
+    "StreamingPipeline",
+    "WholeFilePipeline",
     
-    # Factory functions
-    "create_pipeline",
-    "create_streaming_pipeline",
-    "create_whole_file_pipeline",
-    
-    # Convenience function
-    "process_text"
+    # Factory
+    "PipelineFactory",
+    "get_factory",
+    "create_pipeline"
 ]

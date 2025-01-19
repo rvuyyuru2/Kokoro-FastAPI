@@ -1,6 +1,6 @@
 """CPU-based ONNX inference backend."""
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 import numpy as np
 import torch
@@ -69,11 +69,12 @@ class ONNXCPUBackend(BaseModelBackend):
             self._state = ModelState.FAILED
             raise RuntimeError(f"Failed to load ONNX model: {e}")
 
-    def generate(
+    async def generate(
         self,
-        tokens: list[int],
+        tokens: List[int],
         voice: torch.Tensor,
-        speed: float = 1.0
+        speed: float = 1.0,
+        stream: Optional[torch.cuda.Stream] = None  # Ignored for CPU backend
     ) -> np.ndarray:
         """Generate audio using ONNX model.
         
@@ -81,6 +82,7 @@ class ONNXCPUBackend(BaseModelBackend):
             tokens: Input token IDs
             voice: Voice embedding tensor
             speed: Speed multiplier
+            stream: Ignored for CPU backend
             
         Returns:
             Generated audio samples
@@ -173,29 +175,9 @@ class ONNXCPUBackend(BaseModelBackend):
         if not self.is_loaded:
             raise RuntimeError("Cannot warmup - model not loaded")
             
-        try:
-            # Create dummy inputs for warmup
-            tokens = [1, 2, 3]  # Minimal token sequence
-            tokens_input = np.array([tokens], dtype=np.int64)
-            style_input = np.zeros((1, 256), dtype=np.float32)  # Match expected style dims
-            speed_input = np.array([1.0], dtype=np.float32)
-            
-            # Run inference
-            self._session.run(
-                None,
-                {
-                    "tokens": tokens_input,
-                    "style": style_input,
-                    "speed": speed_input
-                }
-            )
-            
-            self._state = ModelState.WARMED_UP
-            logger.info("ONNX model warmup completed")
-            
-        except Exception as e:
-            self._state = ModelState.FAILED
-            raise RuntimeError(f"Model warmup failed: {e}")
+        # Model warmup is handled by model manager
+        self._state = ModelState.WARMED_UP
+        logger.info("ONNX model warmup completed")
 
     @property
     def state(self) -> ModelState:

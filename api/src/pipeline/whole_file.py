@@ -1,88 +1,66 @@
-"""Whole file strategy for TTS pipeline."""
+"""Whole file pipeline implementation."""
 
-from typing import Optional
+from typing import AsyncIterator, List, Union
 
 import numpy as np
 from loguru import logger
 
-from ..audio_processing import (
-    AudioConfig,
-    AudioProcessor,
-    get_processor as get_audio_processor
-)
-from ..inference import ModelManager, get_manager
+from .base import BasePipeline
 from ..text_processing import process_text
-from .base import GenerationStrategy, Pipeline
 
 
-class WholeFileStrategy(GenerationStrategy):
-    """Strategy for complete file generation."""
+class WholeFilePipeline(BasePipeline):
+    """Complete file generation pipeline."""
 
-    def __init__(
+    async def process(
         self,
-        model_manager: Optional[ModelManager] = None,
-        audio_processor: Optional[AudioProcessor] = None
-    ):
-        """Initialize strategy.
-        
-        Args:
-            model_manager: Optional model manager
-            audio_processor: Optional audio processor
-        """
-        self._model_manager = model_manager or get_manager()
-        self._audio_processor = audio_processor or get_audio_processor()
-
-    def generate(
-        self,
-        pipeline: Pipeline,
         text: str,
         voice: str,
         speed: float = 1.0,
-        format: str = "wav"
+        format: str = "wav",
+        stream: bool = False
     ) -> bytes:
-        """Generate complete audio file.
+        """Process text to speech as complete file.
         
         Args:
-            pipeline: TTS pipeline
             text: Input text
             voice: Voice ID
             speed: Speed multiplier
             format: Output format
+            stream: Whether to stream output (ignored, always returns complete file)
             
         Returns:
-            Audio file bytes
-            
-        Raises:
-            ValueError: If inputs are invalid
-            RuntimeError: If generation fails
+            Complete audio file bytes
         """
+        # Get voice path
+        voice_path = await self.get_voice_path(voice)
+        if not voice_path:
+            raise ValueError(f"Voice not found: {voice}")
+
         try:
-            # Input validation
-            if not text:
-                raise ValueError("Empty input text")
-            if not voice:
-                raise ValueError("No voice specified")
+            # Preprocess text
+            processed_text = self._apply_text_preprocessing(text)
 
             # Process text into token sequences
-            token_sequences = process_text(text)
+            token_sequences = await process_text(processed_text)
             if not token_sequences:
-                raise ValueError("No valid text chunks")
-
-            # Get voice path
-            voice_path = pipeline.get_voice_path(voice)
-            if not voice_path:
-                raise ValueError(f"Voice not found: {voice}")
+                raise ValueError("Text processing failed to generate tokens")
 
             # Generate audio chunks
             audio_chunks = []
             for tokens in token_sequences:
                 try:
-                    chunk_audio = self._model_manager.generate(
+                    # Generate audio
+                    chunk_audio = await self._model_manager.generate(
                         tokens,
                         voice_path,
                         speed
                     )
+                    
+                    # Apply post-processing
+                    chunk_audio = self._apply_audio_postprocessing(chunk_audio)
                     audio_chunks.append(chunk_audio)
+                    
                 except Exception as e:
                     logger.error(f"Chunk generation failed: {e}")
                     continue
@@ -97,51 +75,20 @@ class WholeFileStrategy(GenerationStrategy):
                 else audio_chunks[0]
             )
 
-            # Process audio
+            # Process final audio
             return self._audio_processor.process(
                 complete_audio,
                 format=format,
                 add_padding=True,
                 normalize=True,
                 post_process=True,
-                is_first_chunk=True,
-                is_last_chunk=True,
+                is_first=True,
+                is_last=True,
                 stream=False
             )
 
         except Exception as e:
-            logger.error(f"Error in whole file generation: {str(e)}")
+            logger.error(f"Audio generation failed: {e}")
             raise
-
-    def _combine_chunks(self, chunks: list[np.ndarray]) -> np.ndarray:
-        """Combine audio chunks.
-        
-        Args:
-            chunks: List of audio chunks
-            
-        Returns:
-            Combined audio
-            
-        Raises:
-            ValueError: If no chunks
-        """
-        if not chunks:
-            raise ValueError("No audio chunks to combine")
-
-        # Add padding between chunks
-        padded_chunks = []
-        for i, chunk in enumerate(chunks):
-            processed = self._audio_processor.process(
-                chunk,
-                format="wav",  # Temporary format for processing
-                add_padding=True,
-                normalize=True,
-                post_process=True,
-                is_first_chunk=(i == 0),
-                is_last_chunk=(i == len(chunks) - 1),
-                stream=False
-            )
-            padded_chunks.append(processed)
-
-        # Combine chunks
-        return np.concatenate(padded_chunks)
+        finally:
+            await self.cleanup_voice(voice_path)

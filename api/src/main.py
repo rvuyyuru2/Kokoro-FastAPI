@@ -2,6 +2,7 @@
 
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,13 +11,14 @@ from loguru import logger
 from .core import paths
 from .core.config import settings
 from .routers import openai_compatible, tts
-from .services import get_service
+from .inference import get_manager
+from .pipeline import get_factory
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for service initialization."""
-    logger.info("Initializing TTS service...")
+    """Lifespan context manager for initialization."""
+    logger.info("Initializing TTS system...")
 
     # Initialize plugin manager first
     from .plugins.hooks import initialize_plugin_manager, get_plugin_manager
@@ -26,9 +28,8 @@ async def lifespan(app: FastAPI):
         plugin_manager = initialize_plugin_manager()
     logger.info("Plugin manager initialized")
 
-    # Initialize service
-    service = get_service()
-    model_manager = service._model_manager
+    # Initialize model manager
+    model_manager = get_manager()
 
     try:
         # Initialize model
@@ -41,10 +42,15 @@ async def lifespan(app: FastAPI):
         await model_manager.load_model(model_path)
         backend = model_manager.get_backend()
         await backend.warmup()
-        service._validate_model()  # Ensure model is properly loaded and warmed up
+        
+        if not backend.is_loaded:
+            raise RuntimeError("Model failed to load")
+
+        # Initialize pipeline factory
+        factory = await get_factory()
 
         # Run voice warmup
-        voice_names = await service.list_voices()
+        voice_names = await paths.list_voices()
         if not voice_names:
             logger.error("No voices available for warmup")
             raise RuntimeError("No voices found")
@@ -58,8 +64,13 @@ async def lifespan(app: FastAPI):
                 os.path.join(os.path.dirname(__file__), "core", "don_quixote.txt")
             )).splitlines()[0]
             
-            async for _ in service.generate_stream(sample_text, first_voice):
-                pass
+            # Create whole file pipeline for warmup
+            pipeline = await factory.create_pipeline("whole_file")
+            await pipeline.process(
+                text=sample_text,
+                voice=first_voice,
+                stream=False  # Get complete audio data
+            )
             logger.info("Warmup complete")
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
@@ -87,8 +98,8 @@ async def lifespan(app: FastAPI):
         yield
 
     finally:
-        # Use service's shutdown method for proper cleanup
-        await service.shutdown()
+        # Cleanup resources
+        model_manager.unload_all()
 
 
 # Create FastAPI app

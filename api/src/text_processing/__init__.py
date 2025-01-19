@@ -8,8 +8,8 @@ from .phonemizer import phonemize
 from .tokenizer import tokenize
 
 
-def process_text(text: str, language: str = "a", max_chunk_length: int = 200) -> List[List[int]]:
-    """Process text through complete pipeline.
+async def process_text(text: str, language: str = "a", max_chunk_length: int = 200) -> List[List[int]]:
+    """Process text through complete pipeline asynchronously.
 
     Args:
         text: Input text
@@ -19,12 +19,16 @@ def process_text(text: str, language: str = "a", max_chunk_length: int = 200) ->
     Returns:
         List of token sequences for each chunk
     """
-    # Match reference implementation flow exactly
+    # Split text into chunks first to enable parallel processing
     chunks = list(split_text(text, max_chunk_length))
     token_sequences = []
     
+    # Process each chunk
     for chunk in chunks:
-        # Follow kokoro.py flow exactly
+        # Process text through pipeline stages
+        # Note: phonemize and tokenize are CPU-bound operations
+        # We keep them in the same task to avoid overhead of task switching
+        # for small chunks of text
         ps = phonemize(chunk, language)
         tokens = tokenize(ps)
         if tokens:  # Only add if we got valid tokens
