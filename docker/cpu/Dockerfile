@@ -45,7 +45,7 @@ ENV PYTHONPATH=/app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_LINK_MODE=copy
 ENV USE_GPU=false
-ENV USE_ONNX=false
+ENV USE_ONNX=true
 
 # Run FastAPI server
 CMD ["uv", "run", "python", "-m", "uvicorn", "api.src.main:app", "--host", "0.0.0.0", "--port", "8880", "--log-level", "debug"]

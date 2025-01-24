@@ -39,7 +39,7 @@ async def phonemize_text(request: PhonemeRequest) -> PhonemeResponse:
             raise ValueError("Text cannot be empty")
 
         # Get phonemes
-        phonemes = phonemize(request.text, request.language)
+        phonemes, _ = phonemize(request.text, request.language)  # Unpack tuple
         if not phonemes:
             raise ValueError("Failed to generate phonemes")
 
@@ -116,7 +116,7 @@ async def generate_from_phonemes(
                     )
 
                 # Generate audio for chunk
-                chunk_audio = await tts_service.model_manager.generate(
+                chunk_audio, _ = await tts_service.model_manager.generate(  # Unpack tuple
                     tokens,
                     voice_tensor,
                     speed=request.speed

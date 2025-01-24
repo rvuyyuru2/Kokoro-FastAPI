@@ -17,6 +17,7 @@ from .routers.web_player import router as web_router
 from .core.model_config import model_config
 from .routers.development import router as dev_router
 from .routers.openai_compatible import router as openai_router
+from .routers.subtitled import router as subtitled_router
 from .services.tts_service import TTSService
 
 
@@ -30,7 +31,7 @@ def setup_logger():
                 "{level: <8} | "
                 "{message}",
                 "colorize": True,
-                "level": "INFO",
+                "level": "DEBUG",
             },
         ],
     }
@@ -111,6 +112,7 @@ if settings.cors_enabled:
 # Include routers
 app.include_router(openai_router, prefix="/v1")
 app.include_router(dev_router)  # Development endpoints
+app.include_router(subtitled_router)  # Subtitled endpoints with timing
 if settings.enable_web_player:
     app.include_router(web_router, prefix="/web")  # Web player static files
 

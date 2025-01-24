@@ -22,7 +22,8 @@ def process_text(text: str, language: str = "a") -> list[int]:
         2. Converts phonemes to token IDs using vocabulary
     """
     # Convert text to phonemes
-    phonemes = phonemize(text, language=language)
+    # phonemize now returns (phonemes, alignments) tuple
+    phonemes, _ = phonemize(text, language=language)
     
     # Convert phonemes to token IDs
     return tokenize(phonemes)

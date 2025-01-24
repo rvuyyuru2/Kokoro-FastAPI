@@ -1,6 +1,6 @@
 """GPU-based ONNX inference backend."""
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -67,7 +67,7 @@ class ONNXGPUBackend(BaseModelBackend):
         tokens: list[int],
         voice: torch.Tensor,
         speed: float = 1.0
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Generate audio using ONNX model.
         
         Args:
@@ -76,7 +76,7 @@ class ONNXGPUBackend(BaseModelBackend):
             speed: Speed multiplier
             
         Returns:
-            Generated audio samples
+            Tuple of (generated audio samples, predicted durations)
             
         Raises:
             RuntimeError: If generation fails
@@ -93,7 +93,7 @@ class ONNXGPUBackend(BaseModelBackend):
             speed_input = np.full(1, speed, dtype=np.float32)
 
             # Run inference
-            result = self._session.run(
+            outputs = self._session.run(
                 None,
                 {
                     "tokens": tokens_input,
@@ -102,7 +102,18 @@ class ONNXGPUBackend(BaseModelBackend):
                 }
             )
             
-            return result[0]
+            # The model should output both audio and durations
+            # First output is audio, second is durations
+            if len(outputs) >= 2:
+                audio = outputs[0]
+                durations = outputs[1]
+                return audio, durations
+            else:
+                # If model doesn't output durations, return dummy durations
+                # This maintains compatibility with older models
+                logger.warning("Model does not output duration predictions")
+                dummy_durations = np.ones(len(tokens) + 2)  # +2 for start/end tokens
+                return outputs[0], dummy_durations
             
         except Exception as e:
             if "out of memory" in str(e).lower():

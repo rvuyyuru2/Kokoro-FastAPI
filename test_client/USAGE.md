@@ -1,0 +1,1 @@
+cd test_client && docker build -t kokoro-test-client . && docker run --network host kokoro-test-client

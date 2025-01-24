@@ -7,9 +7,35 @@ class PhonemeRequest(BaseModel):
     language: str = "a"  # Default to American English
 
 
+class TextAlignment(BaseModel):
+    """Character-level text alignment with timing"""
+    characters: list[str]
+    character_start_times_seconds: list[float]
+    character_end_times_seconds: list[float]
+
+
+class PhonemeAlignment(BaseModel):
+    """Alignment between text and phonemes"""
+    text: str
+    phonemes: str
+    start_idx: int
+    end_idx: int
+
 class PhonemeResponse(BaseModel):
+    """Response from phonemize endpoint"""
     phonemes: str
     tokens: list[int]
+    alignments: list[PhonemeAlignment]
+    alignments: list[PhonemeAlignment]
+
+class TimedResponse(BaseModel):
+    """Response with audio and timing information"""
+    audio: str
+    input_text: str
+    audio_duration: float
+    alignment: TextAlignment
+    phoneme_timing: list[dict]
+    text_timing: list[list]
 
 
 class StitchOptions(BaseModel):
@@ -40,6 +66,14 @@ class GenerateFromPhonemesRequest(BaseModel):
     voice: str = Field(..., description="Voice ID to use for generation")
     speed: float = Field(
         default=1.0, ge=0.1, le=5.0, description="Speed factor for generation"
+    )
+    text: Optional[str] = Field(
+        default=None,
+        description="Original text for timing alignment. If provided, response will include text-level timing information."
+    )
+    language: str = Field(
+        default="a",
+        description="Language code for text phonemization ('a' for US English, 'b' for British English)"
     )
     options: Optional[StitchOptions] = Field(
         default=None,

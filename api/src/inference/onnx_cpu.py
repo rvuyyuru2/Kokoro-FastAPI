@@ -1,6 +1,6 @@
 """CPU-based ONNX inference backend."""
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -62,7 +62,7 @@ class ONNXCPUBackend(BaseModelBackend):
         tokens: list[int],
         voice: torch.Tensor,
         speed: float = 1.0
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Generate audio using ONNX model.
         
         Args:
@@ -71,7 +71,7 @@ class ONNXCPUBackend(BaseModelBackend):
             speed: Speed multiplier
             
         Returns:
-            Generated audio samples
+            Tuple of (generated audio samples, predicted durations)
             
         Raises:
             RuntimeError: If generation fails
@@ -91,12 +91,25 @@ class ONNXCPUBackend(BaseModelBackend):
                 "speed": speed_input
             }
             
-            # Try both possible token input names #TODO: 
+            # Try both possible token input names
             for token_name in ["tokens", "input_ids"]:
                 try:
                     inputs[token_name] = tokens_input
-                    result = self._session.run(None, inputs)
-                    return result[0]
+                    outputs = self._session.run(None, inputs)
+                    
+                    # The model should output both audio and durations
+                    # First output is audio, second is durations
+                    if len(outputs) >= 2:
+                        audio = outputs[0]
+                        durations = outputs[1]
+                        return audio, durations
+                    else:
+                        # If model doesn't output durations, return dummy durations
+                        # This maintains compatibility with older models
+                        logger.warning("Model does not output duration predictions")
+                        dummy_durations = np.ones(len(tokens) + 2)  # +2 for start/end tokens
+                        return outputs[0], dummy_durations
+                        
                 except Exception:
                     del inputs[token_name]
                     continue

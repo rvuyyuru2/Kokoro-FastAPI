@@ -1,23 +1,37 @@
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import List, Tuple
 
 import phonemizer
+from loguru import logger
 
 from .normalizer import normalize_text
+
 phonemizers = {}
+
+
+@dataclass
+class PhonemeAlignment:
+    """Alignment between text and phonemes"""
+    text: str
+    phonemes: str
+    start_idx: int
+    end_idx: int
+
 
 class PhonemizerBackend(ABC):
     """Abstract base class for phonemization backends"""
 
     @abstractmethod
-    def phonemize(self, text: str) -> str:
+    def phonemize(self, text: str) -> Tuple[str, List[PhonemeAlignment]]:
         """Convert text to phonemes
 
         Args:
             text: Text to convert to phonemes
 
         Returns:
-            Phonemized text
+            Tuple of (phonemized text, list of alignments)
         """
         pass
 
@@ -36,30 +50,64 @@ class EspeakBackend(PhonemizerBackend):
         )
         self.language = language
 
-    def phonemize(self, text: str) -> str:
+    def phonemize(self, text: str) -> Tuple[str, List[PhonemeAlignment]]:
         """Convert text to phonemes using espeak
 
         Args:
             text: Text to convert to phonemes
 
         Returns:
-            Phonemized text
+            Tuple of (phonemized text, list of alignments)
         """
-        # Phonemize text
-        ps = self.backend.phonemize([text])
-        ps = ps[0] if ps else ""
+        # Split text into words while preserving spaces and punctuation
+        words = re.findall(r'\S+|\s+', text)
+        alignments = []
+        phonemes_list = []
+        
+        # Track current position in text and phonemes
+        text_pos = 0
+        
+        # Process each word
+        for word in words:
+            # Skip pure whitespace/punctuation
+            if not re.search(r'[a-zA-Z]', word):
+                text_pos += len(word)
+                continue
+                
+            # Phonemize single word
+            ps = self.backend.phonemize([word])
+            word_phonemes = ps[0] if ps else ""
+            
+            # Handle special cases
+            word_phonemes = word_phonemes.replace("kəkˈoːɹoʊ", "kˈoʊkəɹoʊ").replace("kəkˈɔːɹəʊ", "kˈəʊkəɹəʊ")
+            word_phonemes = word_phonemes.replace("ʲ", "j").replace("r", "ɹ").replace("x", "k").replace("ɬ", "l")
+            word_phonemes = re.sub(r"(?<=[a-zɹː])(?=hˈʌndɹɪd)", " ", word_phonemes)
+            word_phonemes = re.sub(r' z(?=[;:,.!?¡¿—…"«»"" ]|$)', "z", word_phonemes)
 
-        # Handle special cases
-        ps = ps.replace("kəkˈoːɹoʊ", "kˈoʊkəɹoʊ").replace("kəkˈɔːɹəʊ", "kˈəʊkəɹəʊ")
-        ps = ps.replace("ʲ", "j").replace("r", "ɹ").replace("x", "k").replace("ɬ", "l")
-        ps = re.sub(r"(?<=[a-zɹː])(?=hˈʌndɹɪd)", " ", ps)
-        ps = re.sub(r' z(?=[;:,.!?¡¿—…"«»"" ]|$)', "z", ps)
+            # Language-specific rules
+            if self.language == "en-us":
+                word_phonemes = re.sub(r"(?<=nˈaɪn)ti(?!ː)", "di", word_phonemes)
+            
+            # Create alignment
+            if word_phonemes:
+                alignment = PhonemeAlignment(
+                    text=word,
+                    phonemes=word_phonemes,
+                    start_idx=text_pos,
+                    end_idx=text_pos + len(word)
+                )
+                logger.debug(f"Created alignment: text='{word}' phonemes='{word_phonemes}' start={text_pos} end={text_pos + len(word)}")
+                alignments.append(alignment)
+                phonemes_list.append(word_phonemes)
+            else:
+                logger.debug(f"No phonemes generated for word: '{word}'")
+            
+            text_pos += len(word)
 
-        # Language-specific rules
-        if self.language == "en-us":
-            ps = re.sub(r"(?<=nˈaɪn)ti(?!ː)", "di", ps)
-
-        return ps.strip()
+        # Combine all phonemes
+        full_phonemes = " ".join(phonemes_list)
+        
+        return full_phonemes.strip(), alignments
 
 
 def create_phonemizer(language: str = "a") -> PhonemizerBackend:
@@ -80,7 +128,7 @@ def create_phonemizer(language: str = "a") -> PhonemizerBackend:
     return EspeakBackend(lang_map[language])
 
 
-def phonemize(text: str, language: str = "a", normalize: bool = True) -> str:
+def phonemize(text: str, language: str = "a", normalize: bool = True) -> Tuple[str, List[PhonemeAlignment]]:
     """Convert text to phonemes
 
     Args:
@@ -89,11 +137,19 @@ def phonemize(text: str, language: str = "a", normalize: bool = True) -> str:
         normalize: Whether to normalize text before phonemization
 
     Returns:
-        Phonemized text
+        Tuple of (phonemized text, list of alignments)
     """
     global phonemizers
-    if normalize:
-        text = normalize_text(text)
-    if language not in phonemizers:
-        phonemizers[language]=create_phonemizer(language)
-    return phonemizers[language].phonemize(text)
+    
+    try:
+        if normalize:
+            text = normalize_text(text)
+            
+        if language not in phonemizers:
+            phonemizers[language] = create_phonemizer(language)
+            
+        return phonemizers[language].phonemize(text)
+        
+    except Exception as e:
+        logger.error(f"Phonemization failed: {e}")
+        return "", []

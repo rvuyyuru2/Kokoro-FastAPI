@@ -3,6 +3,7 @@
 import asyncio
 from typing import Dict, Optional, Tuple
 
+import numpy as np
 import torch
 from loguru import logger
 
@@ -21,11 +22,13 @@ from .session_pool import CPUSessionPool, StreamingSessionPool
 _manager_instance = None
 _manager_lock = asyncio.Lock()
 
+
 class ModelManager:
     """Manages model loading and inference across backends."""
     # Class-level state for shared resources
     _loaded_models = {}
     _backends = {}
+
     def __init__(self, config: Optional[ModelConfig] = None):
         """Initialize model manager.
         Note:
@@ -259,7 +262,7 @@ class ModelManager:
                 raise ValueError("Text processing failed")
             
             # Run inference
-            backend.generate(tokens, voice, speed=1.0)
+            audio, _ = backend.generate(tokens, voice, speed=1.0)  # Ignore durations for warmup
             logger.debug("Completed warmup inference")
             
         except Exception as e:
@@ -272,7 +275,7 @@ class ModelManager:
         voice: torch.Tensor,
         speed: float = 1.0,
         backend_type: Optional[str] = None
-    ) -> torch.Tensor:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Generate audio using specified backend.
         
         Args:
@@ -282,7 +285,7 @@ class ModelManager:
             backend_type: Backend to use, uses default if None
             
         Returns:
-            Generated audio tensor
+            Tuple of (generated audio samples, predicted durations)
             
         Raises:
             RuntimeError: If generation fails
@@ -313,14 +316,12 @@ class ModelManager:
 
     @property
     def available_backends(self) -> list[str]:
-        """Get list of available backends.
-        """
+        """Get list of available backends."""
         return list(self._backends.keys())
 
     @property
     def current_backend(self) -> str:
-        """Get current default backend.
-        """
+        """Get current default backend."""
         return self._current_backend
 
 

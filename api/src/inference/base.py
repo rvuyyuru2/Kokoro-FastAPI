@@ -1,7 +1,7 @@
 """Base interfaces for model inference."""
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -28,7 +28,7 @@ class ModelBackend(ABC):
         tokens: List[int],
         voice: torch.Tensor,
         speed: float = 1.0
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Generate audio from tokens.
         
         Args:
@@ -37,7 +37,7 @@ class ModelBackend(ABC):
             speed: Speed multiplier
             
         Returns:
-            Generated audio samples
+            Tuple of (generated audio samples, predicted durations)
             
         Raises:
             RuntimeError: If generation fails

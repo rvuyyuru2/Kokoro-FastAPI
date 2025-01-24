@@ -1,7 +1,7 @@
 """GPU-based PyTorch inference backend."""
 
 import gc
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -43,7 +43,7 @@ def forward(
     ref_s: torch.Tensor,
     speed: float,
     stream: Optional[torch.cuda.Stream] = None
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
     """Forward pass through model.
     
     Args:
@@ -54,7 +54,7 @@ def forward(
         stream: Optional CUDA stream
         
     Returns:
-        Generated audio
+        Tuple of (generated audio, predicted durations)
     """
     device = ref_s.device
     
@@ -107,11 +107,14 @@ def forward(
         # Generate output
         output = model.decoder(asr, F0_pred, N_pred, s_ref)
         
+        # Get predicted durations as numpy array
+        durations = pred_dur.squeeze().cpu().numpy()
+        
         # Ensure operation completion if using custom stream
         if stream:
             stream.synchronize()
             
-        return output.squeeze().cpu().numpy()
+        return output.squeeze().cpu().numpy(), durations
 
 
 def length_to_mask(lengths: torch.Tensor) -> torch.Tensor:
@@ -168,7 +171,7 @@ class PyTorchGPUBackend(BaseModelBackend):
         tokens: list[int],
         voice: torch.Tensor,
         speed: float = 1.0
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Generate audio using GPU model.
         
         Args:
@@ -177,7 +180,7 @@ class PyTorchGPUBackend(BaseModelBackend):
             speed: Speed multiplier
             
         Returns:
-            Generated audio samples
+            Tuple of (generated audio samples, predicted durations)
             
         Raises:
             RuntimeError: If generation fails

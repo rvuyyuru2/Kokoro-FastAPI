@@ -1,4 +1,6 @@
-FROM --platform=$BUILDPLATFORM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+# FROM --platform=$BUILDPLATFORM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+
 # Set non-interactive frontend
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -49,6 +51,7 @@ ENV PYTHONPATH=/app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UV_LINK_MODE=copy
 ENV USE_GPU=true
+ENV USE_ONNX=false
 
 # Run FastAPI server
 CMD ["uv", "run", "python", "-m", "uvicorn", "api.src.main:app", "--host", "0.0.0.0", "--port", "8880", "--log-level", "debug"]

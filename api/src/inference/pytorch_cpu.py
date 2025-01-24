@@ -1,7 +1,7 @@
 """CPU-based PyTorch inference backend."""
 
 import gc
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -14,7 +14,7 @@ from .base import BaseModelBackend
 
 
 @torch.no_grad()
-def forward(model: torch.nn.Module, tokens: list[int], ref_s: torch.Tensor, speed: float) -> np.ndarray:
+def forward(model: torch.nn.Module, tokens: list[int], ref_s: torch.Tensor, speed: float) -> Tuple[np.ndarray, np.ndarray]:
     """Forward pass through model with memory management.
     
     Args:
@@ -24,7 +24,7 @@ def forward(model: torch.nn.Module, tokens: list[int], ref_s: torch.Tensor, spee
         speed: Speed multiplier
         
     Returns:
-        Generated audio
+        Tuple of (generated audio, predicted durations)
     """
     device = ref_s.device
     pred_aln_trg = None
@@ -52,6 +52,7 @@ def forward(model: torch.nn.Module, tokens: list[int], ref_s: torch.Tensor, spee
         duration = model.predictor.duration_proj(x)
         duration = torch.sigmoid(duration).sum(axis=-1) / speed
         pred_dur = torch.round(duration).clamp(min=1).long()
+        durations = pred_dur.squeeze().cpu().numpy()  # Save durations before cleanup
         del duration, x  # Free large intermediates
 
         # Alignment matrix construction
@@ -80,9 +81,9 @@ def forward(model: torch.nn.Module, tokens: list[int], ref_s: torch.Tensor, spee
 
         # Generate output
         output = model.decoder(asr, F0_pred, N_pred, s_ref)
-        result = output.squeeze().cpu().numpy()
+        audio = output.squeeze().cpu().numpy()
         
-        return result
+        return audio, durations
         
     finally:
         # Clean up largest tensors if they were created
@@ -150,7 +151,7 @@ class PyTorchCPUBackend(BaseModelBackend):
         tokens: list[int],
         voice: torch.Tensor,
         speed: float = 1.0
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Generate audio using CPU model.
         
         Args:
@@ -159,7 +160,7 @@ class PyTorchCPUBackend(BaseModelBackend):
             speed: Speed multiplier
             
         Returns:
-            Generated audio samples
+            Tuple of (generated audio samples, predicted durations)
             
         Raises:
             RuntimeError: If generation fails
@@ -171,7 +172,7 @@ class PyTorchCPUBackend(BaseModelBackend):
             # Prepare input
             ref_s = voice[len(tokens)].clone()
             
-            # Generate audio
+            # Generate audio and durations
             return forward(self._model, tokens, ref_s, speed)
             
         except Exception as e:
